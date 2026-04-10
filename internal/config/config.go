@@ -1,0 +1,107 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
+
+	"persona_agent/internal/model"
+)
+
+const (
+	defaultPort = "8080"
+	modeMock    = "mock"
+)
+
+// Config is runtime configuration.
+type Config struct {
+	Port        string
+	LLMMode     string
+	LLMEndpoint string
+	LLMAPIKey   string
+	LLMModel    string
+	LogLevel    string
+	Persona     model.Persona
+}
+
+type envConfig struct {
+	Port          string `env:"PORT" envDefault:"8080"`
+	LLMMode       string `env:"LLM_MODE" envDefault:"mock"`
+	LLMEndpoint   string `env:"LLM_ENDPOINT"`
+	LLMAPIKey     string `env:"LLM_API_KEY"`
+	LLMModel      string `env:"LLM_MODEL" envDefault:"default"`
+	LogLevel      string `env:"LOG_LEVEL" envDefault:"info"`
+	PersonaTone   string `env:"PERSONA_TONE" envDefault:"warm"`
+	PersonaStyle  string `env:"PERSONA_STYLE" envDefault:"concise"`
+	PersonaValues string `env:"PERSONA_VALUES" envDefault:"family,patience"`
+	PersonaPhrase string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
+}
+
+func Load() (Config, error) {
+	_ = godotenv.Load()
+
+	var e envConfig
+	if err := env.Parse(&e); err != nil {
+		return Config{}, fmt.Errorf("parse env config: %w", err)
+	}
+
+	cfg := Config{
+		Port:        strings.TrimSpace(e.Port),
+		LLMMode:     strings.TrimSpace(e.LLMMode),
+		LLMEndpoint: strings.TrimSpace(e.LLMEndpoint),
+		LLMAPIKey:   strings.TrimSpace(e.LLMAPIKey),
+		LLMModel:    strings.TrimSpace(e.LLMModel),
+		LogLevel:    normalizeLogLevel(e.LogLevel),
+		Persona: model.Persona{
+			Tone:    strings.TrimSpace(e.PersonaTone),
+			Style:   strings.TrimSpace(e.PersonaStyle),
+			Values:  splitCSV(e.PersonaValues),
+			Phrases: splitCSV(e.PersonaPhrase),
+		},
+	}
+
+	if cfg.Port == "" {
+		cfg.Port = defaultPort
+	}
+	if cfg.LLMMode == "" {
+		cfg.LLMMode = modeMock
+	}
+	if cfg.Persona.Tone == "" {
+		cfg.Persona.Tone = "warm"
+	}
+	if cfg.Persona.Style == "" {
+		cfg.Persona.Style = "concise"
+	}
+	if len(cfg.Persona.Values) == 0 {
+		cfg.Persona.Values = splitCSV("family,patience")
+	}
+	if len(cfg.Persona.Phrases) == 0 {
+		cfg.Persona.Phrases = splitCSV("慢慢来,别着急")
+	}
+
+	return cfg, nil
+}
+
+func normalizeLogLevel(level string) string {
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case "debug", "info", "warn", "error":
+		return level
+	default:
+		return "info"
+	}
+}
+
+func splitCSV(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
