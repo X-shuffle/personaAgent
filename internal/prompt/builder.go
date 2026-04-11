@@ -26,8 +26,9 @@ func (b DefaultBuilder) Build(persona model.Persona, memories []model.Memory, em
 		strings.Join(persona.Phrases, ", "),
 	)
 
-	personaCtx += fmt.Sprintf("\n\nEmotion: %s",
+	personaCtx += fmt.Sprintf("\n\nEmotion: %s (intensity=%.2f)",
 		emotion.NormalizeLabel(emotionState.Label),
+		normalizeIntensity(emotionState.Intensity),
 	)
 
 	if len(memories) > 0 {
@@ -48,4 +49,14 @@ func (b DefaultBuilder) Build(persona model.Persona, memories []model.Memory, em
 		{Role: "system", Content: personaCtx},
 		{Role: "user", Content: userInput},
 	}
+}
+
+func normalizeIntensity(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }

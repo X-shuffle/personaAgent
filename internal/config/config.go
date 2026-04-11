@@ -14,10 +14,12 @@ import (
 
 const (
 	defaultPort      = "8080"
-	modeMock         = "mock"
-	memoryModeOff    = "off"
-	memoryModeInMem  = "inmem"
-	memoryModeQdrant = "qdrant"
+	modeMock           = "mock"
+	emotionModeRule    = "rule"
+	emotionModeLLM     = "llm"
+	memoryModeOff      = "off"
+	memoryModeInMem    = "inmem"
+	memoryModeQdrant   = "qdrant"
 )
 
 // Config is runtime configuration.
@@ -30,6 +32,7 @@ type Config struct {
 	LogLevel    string
 	Persona     model.Persona
 
+	EmotionDetectorMode         string
 	EmotionDetectTimeoutSeconds int
 
 	MemoryMode       string
@@ -52,7 +55,8 @@ type envConfig struct {
 	PersonaValues string `env:"PERSONA_VALUES" envDefault:"family,patience"`
 	PersonaPhrase string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
 
-	EmotionDetectTimeoutSeconds int `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
+	EmotionDetectorMode         string `env:"EMOTION_DETECTOR_MODE" envDefault:"rule"`
+	EmotionDetectTimeoutSeconds int    `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
 
 	MemoryMode       string `env:"MEMORY_MODE" envDefault:"inmem"`
 	MemoryTopK       int    `env:"MEMORY_TOP_K" envDefault:"3"`
@@ -83,6 +87,7 @@ func Load() (Config, error) {
 			Values:  splitCSV(e.PersonaValues),
 			Phrases: splitCSV(e.PersonaPhrase),
 		},
+		EmotionDetectorMode:         normalizeEmotionMode(e.EmotionDetectorMode),
 		EmotionDetectTimeoutSeconds: e.EmotionDetectTimeoutSeconds,
 		MemoryMode:                  normalizeMemoryMode(e.MemoryMode),
 		MemoryTopK:                  e.MemoryTopK,
@@ -133,6 +138,16 @@ func normalizeLogLevel(level string) string {
 		return level
 	default:
 		return "info"
+	}
+}
+
+func normalizeEmotionMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case emotionModeRule, emotionModeLLM:
+		return mode
+	default:
+		return emotionModeRule
 	}
 }
 

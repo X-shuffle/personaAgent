@@ -29,11 +29,8 @@ func TestDefaultBuilder_Build(t *testing.T) {
 	if got := msgs[0].Content; got == "" {
 		t.Fatal("expected system prompt content")
 	}
-	if !strings.Contains(msgs[0].Content, "Emotion: neutral") {
-		t.Fatalf("expected neutral emotion section, got: %s", msgs[0].Content)
-	}
-	if strings.Contains(msgs[0].Content, "Emotion intensity") {
-		t.Fatalf("did not expect emotion intensity in system prompt: %s", msgs[0].Content)
+	if !strings.Contains(msgs[0].Content, "Emotion: neutral (intensity=0.00)") {
+		t.Fatalf("expected neutral emotion with intensity, got: %s", msgs[0].Content)
 	}
 }
 

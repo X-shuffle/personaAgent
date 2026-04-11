@@ -91,3 +91,69 @@ func TestLLMDetector_Detect_ClientError(t *testing.T) {
 		t.Fatalf("expected client error")
 	}
 }
+
+func TestRuleDetector_Detect_EmptyInput(t *testing.T) {
+	detector := RuleDetector{}
+
+	state, err := detector.Detect(context.Background(), "   ")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if state.Label != LabelNeutral || state.Intensity != 0 {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+}
+
+func TestRuleDetector_Detect_Sad(t *testing.T) {
+	detector := RuleDetector{}
+
+	state, err := detector.Detect(context.Background(), "我今天很难过，特别失落")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if state.Label != LabelSad {
+		t.Fatalf("expected sad, got %+v", state)
+	}
+	if state.Intensity <= 0 || state.Intensity > 1 {
+		t.Fatalf("expected intensity in (0,1], got %+v", state)
+	}
+}
+
+func TestRuleDetector_Detect_AngryPriorityOnCloseScores(t *testing.T) {
+	detector := RuleDetector{}
+
+	state, err := detector.Detect(context.Background(), "我又焦虑又生气")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if state.Label != LabelAngry {
+		t.Fatalf("expected angry by priority tie-break, got %+v", state)
+	}
+}
+
+func TestRuleDetector_Detect_NegatedHappyBecomesSad(t *testing.T) {
+	detector := RuleDetector{}
+
+	state, err := detector.Detect(context.Background(), "我一点都不开心")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if state.Label != LabelSad {
+		t.Fatalf("expected sad for negated happy, got %+v", state)
+	}
+}
+
+func TestRuleDetector_Detect_IntensityClamped(t *testing.T) {
+	detector := RuleDetector{}
+
+	state, err := detector.Detect(context.Background(), "我非常非常非常生气!!! 真的气死了")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if state.Label != LabelAngry {
+		t.Fatalf("expected angry, got %+v", state)
+	}
+	if state.Intensity < 0 || state.Intensity > 1 {
+		t.Fatalf("expected clamped intensity, got %+v", state)
+	}
+}

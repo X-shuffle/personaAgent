@@ -40,11 +40,13 @@ func main() {
 
 	memorySvc := buildMemoryService(cfg)
 
+	emotionDetector := buildEmotionDetector(cfg, llmClient)
+
 	orch := agent.Orchestrator{
 		PersonaProvider: persona.StaticProvider{Persona: cfg.Persona},
 		PromptBuilder:   prompt.DefaultBuilder{},
 		MemoryService:   memorySvc,
-		EmotionDetector: emotion.LLMDetector{Client: llmClient, Timeout: time.Duration(cfg.EmotionDetectTimeoutSeconds) * time.Second},
+		EmotionDetector: emotionDetector,
 		LLMClient:       llmClient,
 		Logger:          logger,
 	}
@@ -71,6 +73,15 @@ func buildMemoryService(cfg config.Config) memory.Service {
 		return memory.NewService(store, embedder, cfg.MemoryTopK, 0)
 	default:
 		return memory.NoopService{}
+	}
+}
+
+func buildEmotionDetector(cfg config.Config, llmClient llm.Client) emotion.Detector {
+	switch cfg.EmotionDetectorMode {
+	case "llm":
+		return emotion.LLMDetector{Client: llmClient, Timeout: time.Duration(cfg.EmotionDetectTimeoutSeconds) * time.Second}
+	default:
+		return emotion.RuleDetector{}
 	}
 }
 
