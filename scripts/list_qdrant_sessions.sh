@@ -3,8 +3,8 @@ set -euo pipefail
 
 # List all unique session_id values stored in Qdrant collection.
 # Usage:
-#   ./list_qdrant_sessions.sh
-#   QDRANT_URL=... QDRANT_COLLECTION=... ./list_qdrant_sessions.sh
+#   ./scripts/list_qdrant_sessions.sh
+#   QDRANT_URL=... QDRANT_COLLECTION=... ./scripts/list_qdrant_sessions.sh
 
 if [[ -f ".env" ]]; then
   set -a

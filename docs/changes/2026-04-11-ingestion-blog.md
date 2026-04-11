@@ -92,9 +92,10 @@
 
 ### 7) Qdrant 运维脚本补齐
 关键文件：
-- `list_qdrant_sessions.sh`
-- `delete_qdrant_session.sh`
-- `delete_all_qdrant_sessions.sh`
+
+- `scripts/list_qdrant_sessions.sh`
+- `scripts/delete_qdrant_session.sh`
+- `scripts/delete_all_qdrant_sessions.sh`
 
 补充 session 维度的列举与删除能力，便于导入验证和回滚清理。
 

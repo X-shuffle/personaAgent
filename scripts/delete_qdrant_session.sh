@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Delete all vectors for a session_id from Qdrant.
 # Usage:
-#   ./delete_qdrant_session.sh <session_id>
-#   QDRANT_URL=... QDRANT_COLLECTION=... ./delete_qdrant_session.sh <session_id>
+#   ./scripts/delete_qdrant_session.sh <session_id>
+#   QDRANT_URL=... QDRANT_COLLECTION=... ./scripts/delete_qdrant_session.sh <session_id>
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <session_id>" >&2

@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Delete all session_id groups from Qdrant collection.
 # Usage:
-#   ./delete_all_qdrant_sessions.sh
-#   QDRANT_URL=... QDRANT_COLLECTION=... ./delete_all_qdrant_sessions.sh
+#   ./scripts/delete_all_qdrant_sessions.sh
+#   QDRANT_URL=... QDRANT_COLLECTION=... ./scripts/delete_all_qdrant_sessions.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIST_SCRIPT="${ROOT_DIR}/list_qdrant_sessions.sh"

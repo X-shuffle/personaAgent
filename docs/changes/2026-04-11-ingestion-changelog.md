@@ -17,9 +17,9 @@
 - `.env.example`：补充 ingestion 相关环境变量示例。
 - `internal/api/ingest_handler_test.go`：新增接口层测试（方法、错误映射、JSON/multipart 场景）。
 - `internal/ingestion/service_test.go`：新增服务层测试（TXT/JSON、dry-run、禁用态、扩展名校验）。
-- `list_qdrant_sessions.sh`：新增/完善 Qdrant session 列举脚本。
-- `delete_qdrant_session.sh`：新增/完善单 session 删除脚本。
-- `delete_all_qdrant_sessions.sh`：新增/完善批量 session 删除脚本。
+- `scripts/list_qdrant_sessions.sh`：新增/完善 Qdrant session 列举脚本。
+- `scripts/delete_qdrant_session.sh`：新增/完善单 session 删除脚本。
+- `scripts/delete_all_qdrant_sessions.sh`：新增/完善批量 session 删除脚本。
 
 ## Validation
 - 代码内已补充测试文件：
