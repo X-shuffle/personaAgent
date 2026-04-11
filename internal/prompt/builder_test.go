@@ -32,13 +32,19 @@ func TestDefaultBuilder_Build(t *testing.T) {
 	if !strings.Contains(msgs[0].Content, "Emotion: neutral (intensity=0.00)") {
 		t.Fatalf("expected neutral emotion with intensity, got: %s", msgs[0].Content)
 	}
+	if !strings.Contains(msgs[0].Content, "Current time:") {
+		t.Fatalf("expected current time anchor in system prompt, got: %s", msgs[0].Content)
+	}
+	if !strings.Contains(msgs[0].Content, "Do not assume a different current year") {
+		t.Fatalf("expected date reasoning guard in system prompt, got: %s", msgs[0].Content)
+	}
 }
 
 func TestDefaultBuilder_Build_WithMemory(t *testing.T) {
 	b := DefaultBuilder{}
 	persona := model.Persona{Tone: "warm", Style: "concise"}
 	memories := []model.Memory{
-		{Content: "User likes morning runs.", Emotion: "happy"},
+		{Content: "User likes morning runs.", Emotion: "happy", Timestamp: 1712800000},
 		{Content: "User prefers concise replies."},
 	}
 
@@ -48,6 +54,9 @@ func TestDefaultBuilder_Build_WithMemory(t *testing.T) {
 	}
 	if !strings.Contains(msgs[0].Content, "User likes morning runs.") {
 		t.Fatalf("expected first memory content in system prompt")
+	}
+	if !strings.Contains(msgs[0].Content, "2024-04-11 09:46:40 +08:00") {
+		t.Fatalf("expected memory timestamp in system prompt, got: %s", msgs[0].Content)
 	}
 	if strings.Contains(msgs[0].Content, "[emotion: happy]") {
 		t.Fatalf("did not expect memory emotion metadata in system prompt")

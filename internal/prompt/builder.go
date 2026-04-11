@@ -3,6 +3,7 @@ package prompt
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"persona_agent/internal/emotion"
 	"persona_agent/internal/model"
@@ -18,6 +19,10 @@ type DefaultBuilder struct{}
 
 func (b DefaultBuilder) Build(persona model.Persona, memories []model.Memory, emotionState model.EmotionState, userInput string) []model.LLMMessage {
 	_ = b
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.UTC
+	}
 	personaCtx := fmt.Sprintf(
 		"You are a persona-driven assistant.\nTone: %s\nStyle: %s\nValues: %s\nPreferred phrases: %s",
 		persona.Tone,
@@ -30,6 +35,8 @@ func (b DefaultBuilder) Build(persona model.Persona, memories []model.Memory, em
 		emotion.NormalizeLabel(emotionState.Label),
 		normalizeIntensity(emotionState.Intensity),
 	)
+	personaCtx += fmt.Sprintf("\nCurrent time: %s", time.Now().In(loc).Format("2006-01-02 15:04:05 -07:00"))
+	personaCtx += "\nWhen user mentions dates/times, reason relative to Current time above and memory timestamps. Do not assume a different current year."
 
 	if len(memories) > 0 {
 		items := make([]string, 0, len(memories))
@@ -38,6 +45,9 @@ func (b DefaultBuilder) Build(persona model.Persona, memories []model.Memory, em
 				continue
 			}
 			item := m.Content
+			if m.Timestamp > 0 {
+				item = fmt.Sprintf("%s | %s", time.Unix(m.Timestamp, 0).In(loc).Format("2006-01-02 15:04:05 -07:00"), item)
+			}
 			items = append(items, item)
 		}
 		if len(items) > 0 {
