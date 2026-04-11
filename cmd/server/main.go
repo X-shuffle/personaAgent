@@ -87,13 +87,13 @@ func buildMemoryAndIngestionServices(cfg config.Config) (memory.Service, ingesti
 		MergeWindowSeconds: cfg.IngestSegmentMergeWindowSeconds,
 		EmbedBatchSize:     cfg.IngestEmbedBatchSize,
 		DefaultSource:      "wechat",
-		AllowedExtensions:  cfg.IngestAllowedExt,
+		AllowedExtensions:  cfg.IngestAllowedExtensions,
 	})
 	return memorySvc, ingestSvc
 }
 
 func buildEmotionDetector(cfg config.Config, llmClient llm.Client) emotion.Detector {
-	switch cfg.EmotionDetectorMode {
+	switch cfg.EmotionDetectMode {
 	case "llm":
 		return emotion.LLMDetector{Client: llmClient, Timeout: time.Duration(cfg.EmotionDetectTimeoutSeconds) * time.Second}
 	default:

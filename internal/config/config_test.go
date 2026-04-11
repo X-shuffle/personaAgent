@@ -44,3 +44,31 @@ func TestLoad_MemorySimilarityThresholdClamp(t *testing.T) {
 		t.Fatalf("expected threshold=1 after clamp, got %v", cfg.MemorySimilarityThreshold)
 	}
 }
+
+func TestLoad_IngestAllowedExtensionsLegacyFallback(t *testing.T) {
+	t.Setenv("INGEST_ALLOWED_EXTENSIONS", "")
+	t.Setenv("INGEST_ALLOWED_EXT", "txt,jsonl")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	if len(cfg.IngestAllowedExtensions) != 2 || cfg.IngestAllowedExtensions[0] != "txt" || cfg.IngestAllowedExtensions[1] != "jsonl" {
+		t.Fatalf("expected legacy fallback [txt jsonl], got %v", cfg.IngestAllowedExtensions)
+	}
+}
+
+func TestLoad_IngestAllowedExtensionsPrimaryPreferred(t *testing.T) {
+	t.Setenv("INGEST_ALLOWED_EXTENSIONS", "txt,md")
+	t.Setenv("INGEST_ALLOWED_EXT", "txt,json")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	if len(cfg.IngestAllowedExtensions) != 2 || cfg.IngestAllowedExtensions[0] != "txt" || cfg.IngestAllowedExtensions[1] != "md" {
+		t.Fatalf("expected primary value [txt md], got %v", cfg.IngestAllowedExtensions)
+	}
+}

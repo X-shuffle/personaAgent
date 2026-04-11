@@ -32,7 +32,7 @@ type Config struct {
 	LogLevel    string
 	Persona     model.Persona
 
-	EmotionDetectorMode         string
+	EmotionDetectMode           string
 	EmotionDetectTimeoutSeconds int
 
 	MemoryMode                string
@@ -45,7 +45,7 @@ type Config struct {
 
 	IngestEnabled                   bool
 	IngestMaxUploadBytes            int64
-	IngestAllowedExt                []string
+	IngestAllowedExtensions         []string
 	IngestEmbedBatchSize            int
 	IngestSegmentMaxChars           int
 	IngestSegmentMergeWindowSeconds int
@@ -61,9 +61,9 @@ type envConfig struct {
 	PersonaTone   string `env:"PERSONA_TONE" envDefault:"warm"`
 	PersonaStyle  string `env:"PERSONA_STYLE" envDefault:"concise"`
 	PersonaValues string `env:"PERSONA_VALUES" envDefault:"family,patience"`
-	PersonaPhrase string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
+	PersonaPhrases string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
 
-	EmotionDetectorMode         string `env:"EMOTION_DETECTOR_MODE" envDefault:"rule"`
+	EmotionDetectMode           string `env:"EMOTION_DETECTOR_MODE" envDefault:"rule"`
 	EmotionDetectTimeoutSeconds int    `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
 
 	MemoryMode                string  `env:"MEMORY_MODE" envDefault:"inmem"`
@@ -76,7 +76,8 @@ type envConfig struct {
 
 	IngestEnabled                   bool   `env:"INGEST_ENABLED" envDefault:"true"`
 	IngestMaxUploadBytes            int64  `env:"INGEST_MAX_UPLOAD_BYTES" envDefault:"10485760"`
-	IngestAllowedExt                string `env:"INGEST_ALLOWED_EXT" envDefault:"txt,json"`
+	IngestAllowedExtensions         string `env:"INGEST_ALLOWED_EXTENSIONS"`
+	IngestAllowedExtLegacy          string `env:"INGEST_ALLOWED_EXT"`
 	IngestEmbedBatchSize            int    `env:"INGEST_EMBED_BATCH_SIZE" envDefault:"64"`
 	IngestSegmentMaxChars           int    `env:"INGEST_SEGMENT_MAX_CHARS" envDefault:"500"`
 	IngestSegmentMergeWindowSeconds int    `env:"INGEST_SEGMENT_MERGE_WINDOW_SECONDS" envDefault:"90"`
@@ -101,9 +102,9 @@ func Load() (Config, error) {
 			Tone:    strings.TrimSpace(e.PersonaTone),
 			Style:   strings.TrimSpace(e.PersonaStyle),
 			Values:  splitCSV(e.PersonaValues),
-			Phrases: splitCSV(e.PersonaPhrase),
+			Phrases: splitCSV(e.PersonaPhrases),
 		},
-		EmotionDetectorMode:         normalizeEmotionMode(e.EmotionDetectorMode),
+		EmotionDetectMode:           normalizeEmotionMode(e.EmotionDetectMode),
 		EmotionDetectTimeoutSeconds: e.EmotionDetectTimeoutSeconds,
 		MemoryMode:                  normalizeMemoryMode(e.MemoryMode),
 		MemoryTopK:                  e.MemoryTopK,
@@ -114,7 +115,7 @@ func Load() (Config, error) {
 		QdrantAPIKey:                strings.TrimSpace(e.QdrantAPIKey),
 		IngestEnabled:               e.IngestEnabled,
 		IngestMaxUploadBytes:        e.IngestMaxUploadBytes,
-		IngestAllowedExt:            splitCSVLower(e.IngestAllowedExt),
+		IngestAllowedExtensions:     splitCSVLower(resolveIngestAllowedExtensions(e.IngestAllowedExtensions, e.IngestAllowedExtLegacy)),
 		IngestEmbedBatchSize:        e.IngestEmbedBatchSize,
 		IngestSegmentMaxChars:       e.IngestSegmentMaxChars,
 		IngestSegmentMergeWindowSeconds: e.IngestSegmentMergeWindowSeconds,
@@ -159,8 +160,8 @@ func Load() (Config, error) {
 	if cfg.IngestMaxUploadBytes <= 0 {
 		cfg.IngestMaxUploadBytes = 10 * 1024 * 1024
 	}
-	if len(cfg.IngestAllowedExt) == 0 {
-		cfg.IngestAllowedExt = []string{"txt", "json"}
+	if len(cfg.IngestAllowedExtensions) == 0 {
+		cfg.IngestAllowedExtensions = []string{"txt", "json"}
 	}
 	if cfg.IngestEmbedBatchSize <= 0 {
 		cfg.IngestEmbedBatchSize = 64
@@ -224,4 +225,18 @@ func splitCSVLower(v string) []string {
 		out = append(out, strings.ToLower(p))
 	}
 	return out
+}
+
+func resolveIngestAllowedExtensions(primary, legacy string) string {
+	primary = strings.TrimSpace(primary)
+	if primary != "" {
+		return primary
+	}
+
+	legacy = strings.TrimSpace(legacy)
+	if legacy != "" {
+		return legacy
+	}
+
+	return "txt,json"
 }
