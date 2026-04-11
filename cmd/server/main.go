@@ -11,6 +11,7 @@ import (
 	"persona_agent/internal/api"
 	"persona_agent/internal/config"
 	"persona_agent/internal/emotion"
+	"persona_agent/internal/ingestion"
 	"persona_agent/internal/llm"
 	"persona_agent/internal/memory"
 	"persona_agent/internal/persona"
@@ -38,7 +39,7 @@ func main() {
 		llmClient = llm.MockClient{}
 	}
 
-	memorySvc := buildMemoryService(cfg)
+	memorySvc, ingestSvc := buildMemoryAndIngestionServices(cfg)
 
 	emotionDetector := buildEmotionDetector(cfg, llmClient)
 
@@ -53,6 +54,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/chat", api.ChatHandler{Orchestrator: orch})
+	mux.Handle("/ingest", api.IngestHandler{Ingestor: ingestSvc, MaxUploadBytes: cfg.IngestMaxUploadBytes})
 
 	addr := ":" + cfg.Port
 	logger.Info("persona_agent listening", zap.String("addr", addr), zap.String("llm_mode", cfg.LLMMode), zap.String("memory_mode", cfg.MemoryMode))
@@ -61,19 +63,33 @@ func main() {
 	}
 }
 
-func buildMemoryService(cfg config.Config) memory.Service {
+func buildMemoryAndIngestionServices(cfg config.Config) (memory.Service, ingestion.Service) {
 	embedder := memory.NewHashEmbedder(cfg.MemoryVectorDim)
 
+	var store memory.Store
 	switch cfg.MemoryMode {
 	case "qdrant":
-		store := memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
-		return memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
+		store = memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
 	case "inmem":
-		store := memory.NewInMemoryStore()
-		return memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
+		store = memory.NewInMemoryStore()
 	default:
-		return memory.NoopService{}
+		return memory.NoopService{}, ingestion.NoopService{}
 	}
+
+	memorySvc := memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
+	if !cfg.IngestEnabled {
+		return memorySvc, ingestion.NoopService{}
+	}
+
+	ingestSvc := ingestion.NewService(embedder, store, ingestion.Config{
+		Enabled:            cfg.IngestEnabled,
+		SegmentMaxChars:    cfg.IngestSegmentMaxChars,
+		MergeWindowSeconds: cfg.IngestSegmentMergeWindowSeconds,
+		EmbedBatchSize:     cfg.IngestEmbedBatchSize,
+		DefaultSource:      "wechat",
+		AllowedExtensions:  cfg.IngestAllowedExt,
+	})
+	return memorySvc, ingestSvc
 }
 
 func buildEmotionDetector(cfg config.Config, llmClient llm.Client) emotion.Detector {

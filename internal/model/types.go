@@ -11,6 +11,28 @@ type ChatResponse struct {
 	Response string `json:"response"`
 }
 
+// IngestRequest is the request payload for POST /ingest JSON mode.
+type IngestRequest struct {
+	SessionID string `json:"session_id"`
+	Source    string `json:"source"`
+	Format    string `json:"format"`
+	Data      string `json:"data"`
+	DryRun    bool   `json:"dry_run"`
+}
+
+// IngestResponse is the response payload for POST /ingest.
+type IngestResponse struct {
+	Status    string   `json:"status"`
+	SessionID string   `json:"session_id"`
+	Source    string   `json:"source"`
+	Accepted  int      `json:"accepted"`
+	Rejected  int      `json:"rejected"`
+	Segments  int      `json:"segments"`
+	Stored    int      `json:"stored"`
+	DryRun    bool     `json:"dry_run"`
+	Warnings  []string `json:"warnings,omitempty"`
+}
+
 // Persona defines style constraints for response generation.
 type Persona struct {
 	Tone    string   `json:"tone"`

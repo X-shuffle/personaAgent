@@ -42,6 +42,13 @@ type Config struct {
 	QdrantURL                 string
 	QdrantCollection          string
 	QdrantAPIKey              string
+
+	IngestEnabled                   bool
+	IngestMaxUploadBytes            int64
+	IngestAllowedExt                []string
+	IngestEmbedBatchSize            int
+	IngestSegmentMaxChars           int
+	IngestSegmentMergeWindowSeconds int
 }
 
 type envConfig struct {
@@ -66,6 +73,13 @@ type envConfig struct {
 	QdrantURL                 string  `env:"QDRANT_URL"`
 	QdrantCollection          string  `env:"QDRANT_COLLECTION" envDefault:"persona_memories"`
 	QdrantAPIKey              string  `env:"QDRANT_API_KEY"`
+
+	IngestEnabled                   bool   `env:"INGEST_ENABLED" envDefault:"true"`
+	IngestMaxUploadBytes            int64  `env:"INGEST_MAX_UPLOAD_BYTES" envDefault:"10485760"`
+	IngestAllowedExt                string `env:"INGEST_ALLOWED_EXT" envDefault:"txt,json"`
+	IngestEmbedBatchSize            int    `env:"INGEST_EMBED_BATCH_SIZE" envDefault:"64"`
+	IngestSegmentMaxChars           int    `env:"INGEST_SEGMENT_MAX_CHARS" envDefault:"500"`
+	IngestSegmentMergeWindowSeconds int    `env:"INGEST_SEGMENT_MERGE_WINDOW_SECONDS" envDefault:"90"`
 }
 
 func Load() (Config, error) {
@@ -98,6 +112,12 @@ func Load() (Config, error) {
 		QdrantURL:                   strings.TrimSpace(e.QdrantURL),
 		QdrantCollection:            strings.TrimSpace(e.QdrantCollection),
 		QdrantAPIKey:                strings.TrimSpace(e.QdrantAPIKey),
+		IngestEnabled:               e.IngestEnabled,
+		IngestMaxUploadBytes:        e.IngestMaxUploadBytes,
+		IngestAllowedExt:            splitCSVLower(e.IngestAllowedExt),
+		IngestEmbedBatchSize:        e.IngestEmbedBatchSize,
+		IngestSegmentMaxChars:       e.IngestSegmentMaxChars,
+		IngestSegmentMergeWindowSeconds: e.IngestSegmentMergeWindowSeconds,
 	}
 
 	if cfg.Port == "" {
@@ -135,6 +155,21 @@ func Load() (Config, error) {
 	}
 	if cfg.QdrantCollection == "" {
 		cfg.QdrantCollection = "persona_memories"
+	}
+	if cfg.IngestMaxUploadBytes <= 0 {
+		cfg.IngestMaxUploadBytes = 10 * 1024 * 1024
+	}
+	if len(cfg.IngestAllowedExt) == 0 {
+		cfg.IngestAllowedExt = []string{"txt", "json"}
+	}
+	if cfg.IngestEmbedBatchSize <= 0 {
+		cfg.IngestEmbedBatchSize = 64
+	}
+	if cfg.IngestSegmentMaxChars <= 0 {
+		cfg.IngestSegmentMaxChars = 500
+	}
+	if cfg.IngestSegmentMergeWindowSeconds <= 0 {
+		cfg.IngestSegmentMergeWindowSeconds = 90
 	}
 
 	return cfg, nil
@@ -178,6 +213,15 @@ func splitCSV(v string) []string {
 		if p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+func splitCSVLower(v string) []string {
+	parts := splitCSV(v)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.ToLower(p))
 	}
 	return out
 }
