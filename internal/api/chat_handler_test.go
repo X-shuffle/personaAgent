@@ -19,7 +19,7 @@ func (p testPersonaProvider) GetPersona(_ context.Context, _ string) (model.Pers
 
 type testPromptBuilder struct{}
 
-func (b testPromptBuilder) Build(_ model.Persona, _ []model.Memory, input string) []model.LLMMessage {
+func (b testPromptBuilder) Build(_ model.Persona, _ []model.Memory, _ model.EmotionState, input string) []model.LLMMessage {
 	return []model.LLMMessage{{Role: "user", Content: input}}
 }
 

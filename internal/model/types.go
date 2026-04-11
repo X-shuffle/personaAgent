@@ -38,6 +38,12 @@ type LLMResponse struct {
 	Model string `json:"model,omitempty"`
 }
 
+// EmotionState is the detected emotional state for the current user turn.
+type EmotionState struct {
+	Label     string  `json:"label"`
+	Intensity float64 `json:"intensity"`
+}
+
 type MemoryType string
 
 const (

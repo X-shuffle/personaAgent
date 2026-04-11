@@ -3,10 +3,12 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 
+	"persona_agent/internal/emotion"
 	"persona_agent/internal/model"
 )
 
@@ -28,12 +30,14 @@ type Config struct {
 	LogLevel    string
 	Persona     model.Persona
 
-	MemoryMode          string
-	MemoryTopK          int
-	MemoryVectorDim     int
-	QdrantURL           string
-	QdrantCollection    string
-	QdrantAPIKey        string
+	EmotionDetectTimeoutSeconds int
+
+	MemoryMode       string
+	MemoryTopK       int
+	MemoryVectorDim  int
+	QdrantURL        string
+	QdrantCollection string
+	QdrantAPIKey     string
 }
 
 type envConfig struct {
@@ -47,6 +51,8 @@ type envConfig struct {
 	PersonaStyle  string `env:"PERSONA_STYLE" envDefault:"concise"`
 	PersonaValues string `env:"PERSONA_VALUES" envDefault:"family,patience"`
 	PersonaPhrase string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
+
+	EmotionDetectTimeoutSeconds int `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
 
 	MemoryMode       string `env:"MEMORY_MODE" envDefault:"inmem"`
 	MemoryTopK       int    `env:"MEMORY_TOP_K" envDefault:"3"`
@@ -77,12 +83,13 @@ func Load() (Config, error) {
 			Values:  splitCSV(e.PersonaValues),
 			Phrases: splitCSV(e.PersonaPhrase),
 		},
-		MemoryMode:       normalizeMemoryMode(e.MemoryMode),
-		MemoryTopK:       e.MemoryTopK,
-		MemoryVectorDim:  e.MemoryVectorDim,
-		QdrantURL:        strings.TrimSpace(e.QdrantURL),
-		QdrantCollection: strings.TrimSpace(e.QdrantCollection),
-		QdrantAPIKey:     strings.TrimSpace(e.QdrantAPIKey),
+		EmotionDetectTimeoutSeconds: e.EmotionDetectTimeoutSeconds,
+		MemoryMode:                  normalizeMemoryMode(e.MemoryMode),
+		MemoryTopK:                  e.MemoryTopK,
+		MemoryVectorDim:             e.MemoryVectorDim,
+		QdrantURL:                   strings.TrimSpace(e.QdrantURL),
+		QdrantCollection:            strings.TrimSpace(e.QdrantCollection),
+		QdrantAPIKey:                strings.TrimSpace(e.QdrantAPIKey),
 	}
 
 	if cfg.Port == "" {
@@ -102,6 +109,9 @@ func Load() (Config, error) {
 	}
 	if len(cfg.Persona.Phrases) == 0 {
 		cfg.Persona.Phrases = splitCSV("慢慢来,别着急")
+	}
+	if cfg.EmotionDetectTimeoutSeconds <= 0 {
+		cfg.EmotionDetectTimeoutSeconds = int(emotion.DefaultDetectTimeout / time.Second)
 	}
 	if cfg.MemoryTopK <= 0 {
 		cfg.MemoryTopK = 3

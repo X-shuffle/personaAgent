@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -9,6 +10,7 @@ import (
 	"persona_agent/internal/agent"
 	"persona_agent/internal/api"
 	"persona_agent/internal/config"
+	"persona_agent/internal/emotion"
 	"persona_agent/internal/llm"
 	"persona_agent/internal/memory"
 	"persona_agent/internal/persona"
@@ -42,6 +44,7 @@ func main() {
 		PersonaProvider: persona.StaticProvider{Persona: cfg.Persona},
 		PromptBuilder:   prompt.DefaultBuilder{},
 		MemoryService:   memorySvc,
+		EmotionDetector: emotion.LLMDetector{Client: llmClient, Timeout: time.Duration(cfg.EmotionDetectTimeoutSeconds) * time.Second},
 		LLMClient:       llmClient,
 		Logger:          logger,
 	}
