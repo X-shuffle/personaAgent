@@ -54,7 +54,7 @@ func (f *fakeStore) Search(_ context.Context, query model.MemorySearchQuery) ([]
 
 func TestServiceRetrieve_OK(t *testing.T) {
 	store := &fakeStore{matches: []model.MemoryMatch{{Memory: model.Memory{ID: "m1"}, Score: 0.9}}}
-	svc := NewService(store, fakeEmbedder{}, 3, 0.2)
+	svc := NewService(store, fakeEmbedder{}, 3, 0.2, 0)
 
 	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
 	if err != nil {
@@ -68,9 +68,25 @@ func TestServiceRetrieve_OK(t *testing.T) {
 	}
 }
 
+func TestServiceRetrieve_SimilarityThreshold(t *testing.T) {
+	store := &fakeStore{matches: []model.MemoryMatch{
+		{Memory: model.Memory{ID: "low"}, Score: 0.19},
+		{Memory: model.Memory{ID: "high"}, Score: 0.81},
+	}}
+	svc := NewService(store, fakeEmbedder{}, 3, 0, 0.2)
+
+	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(memories) != 1 || memories[0].ID != "high" {
+		t.Fatalf("unexpected memories: %+v", memories)
+	}
+}
+
 func TestServiceStoreTurn_OK(t *testing.T) {
 	store := &fakeStore{}
-	svc := NewService(store, fakeEmbedder{}, 3, 0)
+	svc := NewService(store, fakeEmbedder{}, 3, 0, 0)
 	svc.now = func() time.Time { return time.Unix(1000, 0) }
 
 	err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{Label: "anxious", Intensity: 0.6})
@@ -93,7 +109,7 @@ func TestServiceStoreTurn_OK(t *testing.T) {
 }
 
 func TestServiceStoreTurn_EmbedError(t *testing.T) {
-	svc := NewService(&fakeStore{}, fakeEmbedder{err: errors.New("boom")}, 3, 0)
+	svc := NewService(&fakeStore{}, fakeEmbedder{err: errors.New("boom")}, 3, 0, 0)
 	if err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{}); err == nil {
 		t.Fatalf("expected error")
 	}

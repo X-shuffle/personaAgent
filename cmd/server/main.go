@@ -67,10 +67,10 @@ func buildMemoryService(cfg config.Config) memory.Service {
 	switch cfg.MemoryMode {
 	case "qdrant":
 		store := memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
-		return memory.NewService(store, embedder, cfg.MemoryTopK, 0)
+		return memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
 	case "inmem":
 		store := memory.NewInMemoryStore()
-		return memory.NewService(store, embedder, cfg.MemoryTopK, 0)
+		return memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
 	default:
 		return memory.NoopService{}
 	}

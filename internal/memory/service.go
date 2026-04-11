@@ -12,22 +12,30 @@ import (
 
 // DefaultService implements memory retrieval and turn storage.
 type DefaultService struct {
-	store         Store
-	embedder      Embedder
-	topK          int
-	minImportance float64
-	now           func() time.Time
+	store            Store
+	embedder         Embedder
+	topK             int
+	minImportance    float64
+	minSimilarity    float64
+	now              func() time.Time
 }
 
-func NewService(store Store, embedder Embedder, topK int, minImportance float64) *DefaultService {
+func NewService(store Store, embedder Embedder, topK int, minImportance, minSimilarity float64) *DefaultService {
 	if topK <= 0 {
 		topK = 3
+	}
+	if minSimilarity < 0 {
+		minSimilarity = 0
+	}
+	if minSimilarity > 1 {
+		minSimilarity = 1
 	}
 	return &DefaultService{
 		store:         store,
 		embedder:      embedder,
 		topK:          topK,
 		minImportance: minImportance,
+		minSimilarity: minSimilarity,
 		now:           time.Now,
 	}
 }
@@ -59,6 +67,9 @@ func (s *DefaultService) Retrieve(ctx context.Context, sessionID, userInput stri
 
 	out := make([]model.Memory, 0, len(matches))
 	for _, m := range matches {
+		if m.Score < s.minSimilarity {
+			continue
+		}
 		out = append(out, m.Memory)
 	}
 	return out, nil

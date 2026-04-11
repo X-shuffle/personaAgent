@@ -35,12 +35,13 @@ type Config struct {
 	EmotionDetectorMode         string
 	EmotionDetectTimeoutSeconds int
 
-	MemoryMode       string
-	MemoryTopK       int
-	MemoryVectorDim  int
-	QdrantURL        string
-	QdrantCollection string
-	QdrantAPIKey     string
+	MemoryMode                string
+	MemoryTopK                int
+	MemoryVectorDim           int
+	MemorySimilarityThreshold float64
+	QdrantURL                 string
+	QdrantCollection          string
+	QdrantAPIKey              string
 }
 
 type envConfig struct {
@@ -58,12 +59,13 @@ type envConfig struct {
 	EmotionDetectorMode         string `env:"EMOTION_DETECTOR_MODE" envDefault:"rule"`
 	EmotionDetectTimeoutSeconds int    `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
 
-	MemoryMode       string `env:"MEMORY_MODE" envDefault:"inmem"`
-	MemoryTopK       int    `env:"MEMORY_TOP_K" envDefault:"3"`
-	MemoryVectorDim  int    `env:"MEMORY_VECTOR_DIM" envDefault:"256"`
-	QdrantURL        string `env:"QDRANT_URL"`
-	QdrantCollection string `env:"QDRANT_COLLECTION" envDefault:"persona_memories"`
-	QdrantAPIKey     string `env:"QDRANT_API_KEY"`
+	MemoryMode                string  `env:"MEMORY_MODE" envDefault:"inmem"`
+	MemoryTopK                int     `env:"MEMORY_TOP_K" envDefault:"3"`
+	MemoryVectorDim           int     `env:"MEMORY_VECTOR_DIM" envDefault:"256"`
+	MemorySimilarityThreshold float64 `env:"MEMORY_SIMILARITY_THRESHOLD" envDefault:"0"`
+	QdrantURL                 string  `env:"QDRANT_URL"`
+	QdrantCollection          string  `env:"QDRANT_COLLECTION" envDefault:"persona_memories"`
+	QdrantAPIKey              string  `env:"QDRANT_API_KEY"`
 }
 
 func Load() (Config, error) {
@@ -92,6 +94,7 @@ func Load() (Config, error) {
 		MemoryMode:                  normalizeMemoryMode(e.MemoryMode),
 		MemoryTopK:                  e.MemoryTopK,
 		MemoryVectorDim:             e.MemoryVectorDim,
+		MemorySimilarityThreshold:   e.MemorySimilarityThreshold,
 		QdrantURL:                   strings.TrimSpace(e.QdrantURL),
 		QdrantCollection:            strings.TrimSpace(e.QdrantCollection),
 		QdrantAPIKey:                strings.TrimSpace(e.QdrantAPIKey),
@@ -123,6 +126,12 @@ func Load() (Config, error) {
 	}
 	if cfg.MemoryVectorDim <= 0 {
 		cfg.MemoryVectorDim = 256
+	}
+	if cfg.MemorySimilarityThreshold < 0 {
+		cfg.MemorySimilarityThreshold = 0
+	}
+	if cfg.MemorySimilarityThreshold > 1 {
+		cfg.MemorySimilarityThreshold = 1
 	}
 	if cfg.QdrantCollection == "" {
 		cfg.QdrantCollection = "persona_memories"
