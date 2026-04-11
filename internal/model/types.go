@@ -37,3 +37,37 @@ type LLMResponse struct {
 	Text  string `json:"text"`
 	Model string `json:"model,omitempty"`
 }
+
+type MemoryType string
+
+const (
+	MemoryTypeEpisodic MemoryType = "episodic"
+	MemoryTypeSemantic MemoryType = "semantic"
+	MemoryTypeSummary  MemoryType = "summary"
+)
+
+// Memory is one memory unit used for retrieval and storage.
+type Memory struct {
+	ID         string     `json:"id"`
+	SessionID  string     `json:"session_id"`
+	Type       MemoryType `json:"type"`
+	Content    string     `json:"content"`
+	Embedding  []float64  `json:"embedding"`
+	Emotion    string     `json:"emotion"`
+	Timestamp  int64      `json:"timestamp"`
+	Importance float64    `json:"importance"`
+}
+
+// MemorySearchQuery represents vector retrieval constraints.
+type MemorySearchQuery struct {
+	SessionID      string
+	QueryEmbedding []float64
+	TopK           int
+	MinImportance  float64
+}
+
+// MemoryMatch includes memory and similarity score.
+type MemoryMatch struct {
+	Memory Memory
+	Score  float64
+}

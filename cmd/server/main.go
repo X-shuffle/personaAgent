@@ -10,6 +10,7 @@ import (
 	"persona_agent/internal/api"
 	"persona_agent/internal/config"
 	"persona_agent/internal/llm"
+	"persona_agent/internal/memory"
 	"persona_agent/internal/persona"
 	"persona_agent/internal/prompt"
 )
@@ -35,19 +36,38 @@ func main() {
 		llmClient = llm.MockClient{}
 	}
 
+	memorySvc := buildMemoryService(cfg)
+
 	orch := agent.Orchestrator{
 		PersonaProvider: persona.StaticProvider{Persona: cfg.Persona},
 		PromptBuilder:   prompt.DefaultBuilder{},
+		MemoryService:   memorySvc,
 		LLMClient:       llmClient,
+		Logger:          logger,
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/chat", api.ChatHandler{Orchestrator: orch})
 
 	addr := ":" + cfg.Port
-	logger.Info("persona_agent listening", zap.String("addr", addr), zap.String("llm_mode", cfg.LLMMode))
+	logger.Info("persona_agent listening", zap.String("addr", addr), zap.String("llm_mode", cfg.LLMMode), zap.String("memory_mode", cfg.MemoryMode))
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		logger.Fatal("server exited", zap.Error(err))
+	}
+}
+
+func buildMemoryService(cfg config.Config) memory.Service {
+	embedder := memory.NewHashEmbedder(cfg.MemoryVectorDim)
+
+	switch cfg.MemoryMode {
+	case "qdrant":
+		store := memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
+		return memory.NewService(store, embedder, cfg.MemoryTopK, 0)
+	case "inmem":
+		store := memory.NewInMemoryStore()
+		return memory.NewService(store, embedder, cfg.MemoryTopK, 0)
+	default:
+		return memory.NoopService{}
 	}
 }
 

@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"persona_agent/internal/llm"
+	"persona_agent/internal/memory"
 	"persona_agent/internal/model"
 	"persona_agent/internal/persona"
 	"persona_agent/internal/prompt"
@@ -17,11 +20,13 @@ var (
 	ErrUpstreamLLM  = errors.New("llm upstream error")
 )
 
-// Orchestrator coordinates persona + prompt + llm.
+// Orchestrator coordinates persona + memory + prompt + llm.
 type Orchestrator struct {
 	PersonaProvider persona.Provider
 	PromptBuilder   prompt.Builder
+	MemoryService   memory.Service
 	LLMClient       llm.Client
+	Logger          *zap.Logger
 }
 
 func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (string, error) {
@@ -36,7 +41,18 @@ func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (stri
 		return "", fmt.Errorf("get persona: %w", err)
 	}
 
-	messages := o.PromptBuilder.Build(p, message)
+	var memories []model.Memory
+	if o.MemoryService != nil {
+		memories, err = o.MemoryService.Retrieve(ctx, sessionID, message)
+		if err != nil {
+			if o.Logger != nil {
+				o.Logger.Warn("memory retrieve failed", zap.String("session_id", sessionID), zap.Error(err))
+			}
+			memories = nil
+		}
+	}
+
+	messages := o.PromptBuilder.Build(p, memories, message)
 	resp, err := o.LLMClient.Generate(ctx, model.LLMRequest{
 		Messages: messages,
 	})
@@ -47,5 +63,14 @@ func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (stri
 	if strings.TrimSpace(resp.Text) == "" {
 		return "", fmt.Errorf("%w: empty text", ErrUpstreamLLM)
 	}
+
+	if o.MemoryService != nil {
+		if err := o.MemoryService.StoreTurn(ctx, sessionID, message, resp.Text); err != nil {
+			if o.Logger != nil {
+				o.Logger.Warn("memory store failed", zap.String("session_id", sessionID), zap.Error(err))
+			}
+		}
+	}
+
 	return resp.Text, nil
 }

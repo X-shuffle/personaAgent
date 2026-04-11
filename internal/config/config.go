@@ -11,8 +11,11 @@ import (
 )
 
 const (
-	defaultPort = "8080"
-	modeMock    = "mock"
+	defaultPort      = "8080"
+	modeMock         = "mock"
+	memoryModeOff    = "off"
+	memoryModeInMem  = "inmem"
+	memoryModeQdrant = "qdrant"
 )
 
 // Config is runtime configuration.
@@ -24,6 +27,13 @@ type Config struct {
 	LLMModel    string
 	LogLevel    string
 	Persona     model.Persona
+
+	MemoryMode          string
+	MemoryTopK          int
+	MemoryVectorDim     int
+	QdrantURL           string
+	QdrantCollection    string
+	QdrantAPIKey        string
 }
 
 type envConfig struct {
@@ -37,6 +47,13 @@ type envConfig struct {
 	PersonaStyle  string `env:"PERSONA_STYLE" envDefault:"concise"`
 	PersonaValues string `env:"PERSONA_VALUES" envDefault:"family,patience"`
 	PersonaPhrase string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
+
+	MemoryMode       string `env:"MEMORY_MODE" envDefault:"inmem"`
+	MemoryTopK       int    `env:"MEMORY_TOP_K" envDefault:"3"`
+	MemoryVectorDim  int    `env:"MEMORY_VECTOR_DIM" envDefault:"256"`
+	QdrantURL        string `env:"QDRANT_URL"`
+	QdrantCollection string `env:"QDRANT_COLLECTION" envDefault:"persona_memories"`
+	QdrantAPIKey     string `env:"QDRANT_API_KEY"`
 }
 
 func Load() (Config, error) {
@@ -60,6 +77,12 @@ func Load() (Config, error) {
 			Values:  splitCSV(e.PersonaValues),
 			Phrases: splitCSV(e.PersonaPhrase),
 		},
+		MemoryMode:       normalizeMemoryMode(e.MemoryMode),
+		MemoryTopK:       e.MemoryTopK,
+		MemoryVectorDim:  e.MemoryVectorDim,
+		QdrantURL:        strings.TrimSpace(e.QdrantURL),
+		QdrantCollection: strings.TrimSpace(e.QdrantCollection),
+		QdrantAPIKey:     strings.TrimSpace(e.QdrantAPIKey),
 	}
 
 	if cfg.Port == "" {
@@ -80,6 +103,15 @@ func Load() (Config, error) {
 	if len(cfg.Persona.Phrases) == 0 {
 		cfg.Persona.Phrases = splitCSV("慢慢来,别着急")
 	}
+	if cfg.MemoryTopK <= 0 {
+		cfg.MemoryTopK = 3
+	}
+	if cfg.MemoryVectorDim <= 0 {
+		cfg.MemoryVectorDim = 256
+	}
+	if cfg.QdrantCollection == "" {
+		cfg.QdrantCollection = "persona_memories"
+	}
 
 	return cfg, nil
 }
@@ -91,6 +123,16 @@ func normalizeLogLevel(level string) string {
 		return level
 	default:
 		return "info"
+	}
+}
+
+func normalizeMemoryMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case memoryModeOff, memoryModeInMem, memoryModeQdrant:
+		return mode
+	default:
+		return memoryModeInMem
 	}
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,13 +13,13 @@ import (
 
 type testPersonaProvider struct{}
 
-func (p testPersonaProvider) GetPersona(_ interface{}, _ string) (model.Persona, error) {
+func (p testPersonaProvider) GetPersona(_ context.Context, _ string) (model.Persona, error) {
 	return model.Persona{Tone: "warm"}, nil
 }
 
 type testPromptBuilder struct{}
 
-func (b testPromptBuilder) Build(_ model.Persona, input string) []model.LLMMessage {
+func (b testPromptBuilder) Build(_ model.Persona, _ []model.Memory, input string) []model.LLMMessage {
 	return []model.LLMMessage{{Role: "user", Content: input}}
 }
 
@@ -26,7 +27,7 @@ type testLLMClient struct {
 	fail bool
 }
 
-func (c testLLMClient) Generate(_ interface{}, _ model.LLMRequest) (model.LLMResponse, error) {
+func (c testLLMClient) Generate(_ context.Context, _ model.LLMRequest) (model.LLMResponse, error) {
 	if c.fail {
 		return model.LLMResponse{}, agent.ErrUpstreamLLM
 	}
