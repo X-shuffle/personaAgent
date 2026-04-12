@@ -7,20 +7,28 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"persona_agent/internal/model"
 )
 
 // DefaultService implements memory retrieval and turn storage.
 type DefaultService struct {
-	store            Store
-	embedder         Embedder
-	topK             int
-	minImportance    float64
-	minSimilarity    float64
-	now              func() time.Time
+	store    Store
+	embedder Embedder
+	// logger 用于输出检索命中/过滤细节，便于排查“为何某条记忆未被使用”。
+	logger        *zap.Logger
+	topK          int
+	minImportance float64
+	minSimilarity float64
+	now           func() time.Time
 }
 
-func NewService(store Store, embedder Embedder, topK int, minImportance, minSimilarity float64) *DefaultService {
+func NewService(store Store, embedder Embedder, logger *zap.Logger, topK int, minImportance, minSimilarity float64) *DefaultService {
+	if logger == nil {
+		// 统一要求外部注入 logger，避免运行时到处做 nil 判断。
+		panic("memory logger is nil")
+	}
 	if topK <= 0 {
 		topK = 3
 	}
@@ -33,6 +41,7 @@ func NewService(store Store, embedder Embedder, topK int, minImportance, minSimi
 	return &DefaultService{
 		store:         store,
 		embedder:      embedder,
+		logger:        logger,
 		topK:          topK,
 		minImportance: minImportance,
 		minSimilarity: minSimilarity,
@@ -64,12 +73,25 @@ func (s *DefaultService) Retrieve(ctx context.Context, sessionID, userInput stri
 	if err != nil {
 		return nil, fmt.Errorf("search memory: %w", err)
 	}
+	s.logger.Debug("memory retrieve raw matches",
+		zap.String("session_id", sessionID),
+		zap.Int("count", len(matches)),
+	)
 
 	out := make([]model.Memory, 0, len(matches))
 	for _, m := range matches {
 		if m.Score < s.minSimilarity {
+			// 分数低于阈值的记忆会被过滤，不参与后续 prompt 组装。
+			s.logger.Debug("memory retrieve filtered",
+				zap.Float64("score", m.Score),
+				zap.Float64("threshold", s.minSimilarity),
+			)
 			continue
 		}
+		s.logger.Debug("memory retrieve kept",
+			zap.Float64("score", m.Score),
+			zap.Any("memory", m.Memory.Content),
+		)
 		out = append(out, m.Memory)
 	}
 	return out, nil

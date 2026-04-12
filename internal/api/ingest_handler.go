@@ -51,7 +51,8 @@ func (h IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ingestion.ErrDisabled):
 			writeError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
 		default:
-			writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
+			// 这里返回真实错误，便于定位 embedding 维度或上游依赖问题。
+			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		}
 		return
 	}

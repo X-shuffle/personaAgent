@@ -34,12 +34,19 @@ func main() {
 
 	var llmClient llm.Client
 	if cfg.LLMMode == "http" {
-		llmClient = llm.HTTPClient{Endpoint: cfg.LLMEndpoint, APIKey: cfg.LLMAPIKey, Model: cfg.LLMModel, Logger: logger}
+		// HTTP 模式下，超时由 .env 中的 LLM_TIMEOUT_SECONDS 控制，便于按环境调参。
+		llmClient = llm.HTTPClient{
+			Endpoint:   cfg.LLMEndpoint,
+			APIKey:     cfg.LLMAPIKey,
+			Model:      cfg.LLMModel,
+			HTTPClient: &http.Client{Timeout: time.Duration(cfg.LLMTimeoutSeconds) * time.Second},
+			Logger:     logger,
+		}
 	} else {
 		llmClient = llm.MockClient{}
 	}
 
-	memorySvc, ingestSvc := buildMemoryAndIngestionServices(cfg)
+	memorySvc, ingestSvc := buildMemoryAndIngestionServices(cfg, logger)
 
 	emotionDetector := buildEmotionDetector(cfg, llmClient)
 
@@ -63,12 +70,22 @@ func main() {
 	}
 }
 
-func buildMemoryAndIngestionServices(cfg config.Config) (memory.Service, ingestion.Service) {
-	embedder := memory.NewHashEmbedder(cfg.MemoryVectorDim)
+func buildMemoryAndIngestionServices(cfg config.Config, logger *zap.Logger) (memory.Service, ingestion.Service) {
+	// 统一使用云端 embedding，不再走本地 hash embedder。
+	embedder := memory.HTTPEmbedder{
+		Endpoint:    cfg.MemoryEmbedEndpoint,
+		APIKey:      cfg.MemoryEmbedAPIKey,
+		Model:       cfg.MemoryEmbedModel,
+		ExpectedDim: cfg.MemoryVectorDim,
+		HTTPClient: &http.Client{
+			Timeout: time.Duration(cfg.MemoryEmbedTimeoutSeconds) * time.Second,
+		},
+	}
 	store := memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
 
-	memorySvc := memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
+	memorySvc := memory.NewService(store, embedder, logger, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
 	if !cfg.IngestEnabled {
+		// 未开启摄入时仍保留记忆检索能力，只关闭 /ingest 的实际写入流程。
 		return memorySvc, ingestion.NoopService{}
 	}
 

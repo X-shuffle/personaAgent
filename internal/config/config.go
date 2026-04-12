@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	defaultPort      = "8080"
-	modeMock           = "mock"
-	emotionModeRule    = "rule"
-	emotionModeLLM     = "llm"
+	defaultPort     = "8080"
+	modeMock        = "mock"
+	emotionModeRule = "rule"
+	emotionModeLLM  = "llm"
 )
 
 // Config is runtime configuration.
@@ -26,6 +26,8 @@ type Config struct {
 	LLMEndpoint string
 	LLMAPIKey   string
 	LLMModel    string
+	// LLMTimeoutSeconds 控制 HTTP 模式下单次 LLM 请求超时（秒）。
+	LLMTimeoutSeconds int
 	LogLevel    string
 	Persona     model.Persona
 
@@ -35,6 +37,12 @@ type Config struct {
 	MemoryTopK                int
 	MemoryVectorDim           int
 	MemorySimilarityThreshold float64
+	// MemoryEmbedEndpoint 是 embedding API 地址，服务启动时要求必填。
+	MemoryEmbedEndpoint       string
+	MemoryEmbedAPIKey         string
+	MemoryEmbedModel          string
+	// MemoryEmbedTimeoutSeconds 控制 embedding HTTP 请求超时（秒）。
+	MemoryEmbedTimeoutSeconds int
 	QdrantURL                 string
 	QdrantCollection          string
 	QdrantAPIKey              string
@@ -48,15 +56,16 @@ type Config struct {
 }
 
 type envConfig struct {
-	Port          string `env:"PORT" envDefault:"8080"`
-	LLMMode       string `env:"LLM_MODE" envDefault:"mock"`
-	LLMEndpoint   string `env:"LLM_ENDPOINT"`
-	LLMAPIKey     string `env:"LLM_API_KEY"`
-	LLMModel      string `env:"LLM_MODEL" envDefault:"default"`
-	LogLevel      string `env:"LOG_LEVEL" envDefault:"info"`
-	PersonaTone   string `env:"PERSONA_TONE" envDefault:"warm"`
-	PersonaStyle  string `env:"PERSONA_STYLE" envDefault:"concise"`
-	PersonaValues string `env:"PERSONA_VALUES" envDefault:"family,patience"`
+	Port           string `env:"PORT" envDefault:"8080"`
+	LLMMode        string `env:"LLM_MODE" envDefault:"mock"`
+	LLMEndpoint    string `env:"LLM_ENDPOINT"`
+	LLMAPIKey      string `env:"LLM_API_KEY"`
+	LLMModel       string `env:"LLM_MODEL" envDefault:"default"`
+	LLMTimeoutSeconds int `env:"LLM_TIMEOUT_SECONDS" envDefault:"20"`
+	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
+	PersonaTone    string `env:"PERSONA_TONE" envDefault:"warm"`
+	PersonaStyle   string `env:"PERSONA_STYLE" envDefault:"concise"`
+	PersonaValues  string `env:"PERSONA_VALUES" envDefault:"family,patience"`
 	PersonaPhrases string `env:"PERSONA_PHRASES" envDefault:"慢慢来,别着急"`
 
 	EmotionDetectMode           string `env:"EMOTION_DETECTOR_MODE" envDefault:"rule"`
@@ -65,6 +74,10 @@ type envConfig struct {
 	MemoryTopK                int     `env:"MEMORY_TOP_K" envDefault:"3"`
 	MemoryVectorDim           int     `env:"MEMORY_VECTOR_DIM" envDefault:"256"`
 	MemorySimilarityThreshold float64 `env:"MEMORY_SIMILARITY_THRESHOLD" envDefault:"0"`
+	MemoryEmbedEndpoint       string  `env:"MEMORY_EMBED_ENDPOINT"`
+	MemoryEmbedAPIKey         string  `env:"MEMORY_EMBED_API_KEY"`
+	MemoryEmbedModel          string  `env:"MEMORY_EMBED_MODEL" envDefault:"bge-large-zh-v1.5"`
+	MemoryEmbedTimeoutSeconds int     `env:"MEMORY_EMBED_TIMEOUT_SECONDS" envDefault:"15"`
 	QdrantURL                 string  `env:"QDRANT_URL"`
 	QdrantCollection          string  `env:"QDRANT_COLLECTION" envDefault:"persona_memories"`
 	QdrantAPIKey              string  `env:"QDRANT_API_KEY"`
@@ -92,6 +105,7 @@ func Load() (Config, error) {
 		LLMEndpoint: strings.TrimSpace(e.LLMEndpoint),
 		LLMAPIKey:   strings.TrimSpace(e.LLMAPIKey),
 		LLMModel:    strings.TrimSpace(e.LLMModel),
+		LLMTimeoutSeconds: e.LLMTimeoutSeconds,
 		LogLevel:    normalizeLogLevel(e.LogLevel),
 		Persona: model.Persona{
 			Tone:    strings.TrimSpace(e.PersonaTone),
@@ -104,6 +118,10 @@ func Load() (Config, error) {
 		MemoryTopK:                  e.MemoryTopK,
 		MemoryVectorDim:             e.MemoryVectorDim,
 		MemorySimilarityThreshold:   e.MemorySimilarityThreshold,
+		MemoryEmbedEndpoint:         strings.TrimSpace(e.MemoryEmbedEndpoint),
+		MemoryEmbedAPIKey:           strings.TrimSpace(e.MemoryEmbedAPIKey),
+		MemoryEmbedModel:            strings.TrimSpace(e.MemoryEmbedModel),
+		MemoryEmbedTimeoutSeconds:   e.MemoryEmbedTimeoutSeconds,
 		QdrantURL:                   strings.TrimSpace(e.QdrantURL),
 		QdrantCollection:            strings.TrimSpace(e.QdrantCollection),
 		QdrantAPIKey:                strings.TrimSpace(e.QdrantAPIKey),
@@ -120,6 +138,10 @@ func Load() (Config, error) {
 	}
 	if cfg.LLMMode == "" {
 		cfg.LLMMode = modeMock
+	}
+	if cfg.LLMTimeoutSeconds <= 0 {
+		// 防止误配 0/负数导致请求无超时约束。
+		cfg.LLMTimeoutSeconds = 20
 	}
 	if cfg.Persona.Tone == "" {
 		cfg.Persona.Tone = "warm"
@@ -147,6 +169,16 @@ func Load() (Config, error) {
 	}
 	if cfg.MemorySimilarityThreshold > 1 {
 		cfg.MemorySimilarityThreshold = 1
+	}
+	if cfg.MemoryEmbedModel == "" {
+		cfg.MemoryEmbedModel = "bge-large-zh-v1.5"
+	}
+	if cfg.MemoryEmbedTimeoutSeconds <= 0 {
+		cfg.MemoryEmbedTimeoutSeconds = 15
+	}
+	if cfg.MemoryEmbedEndpoint == "" {
+		// embedding 接口是记忆检索与摄入的前置依赖，缺失时直接 fail fast。
+		return Config{}, fmt.Errorf("memory embed endpoint is required")
 	}
 	if cfg.QdrantCollection == "" {
 		cfg.QdrantCollection = "persona_memories"
