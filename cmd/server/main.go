@@ -57,7 +57,7 @@ func main() {
 	mux.Handle("/ingest", api.IngestHandler{Ingestor: ingestSvc, MaxUploadBytes: cfg.IngestMaxUploadBytes})
 
 	addr := ":" + cfg.Port
-	logger.Info("persona_agent listening", zap.String("addr", addr), zap.String("llm_mode", cfg.LLMMode), zap.String("memory_mode", cfg.MemoryMode))
+	logger.Info("persona_agent listening", zap.String("addr", addr), zap.String("llm_mode", cfg.LLMMode))
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		logger.Fatal("server exited", zap.Error(err))
 	}
@@ -65,16 +65,7 @@ func main() {
 
 func buildMemoryAndIngestionServices(cfg config.Config) (memory.Service, ingestion.Service) {
 	embedder := memory.NewHashEmbedder(cfg.MemoryVectorDim)
-
-	var store memory.Store
-	switch cfg.MemoryMode {
-	case "qdrant":
-		store = memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
-	case "inmem":
-		store = memory.NewInMemoryStore()
-	default:
-		return memory.NoopService{}, ingestion.NoopService{}
-	}
+	store := memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
 
 	memorySvc := memory.NewService(store, embedder, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
 	if !cfg.IngestEnabled {

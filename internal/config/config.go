@@ -17,9 +17,6 @@ const (
 	modeMock           = "mock"
 	emotionModeRule    = "rule"
 	emotionModeLLM     = "llm"
-	memoryModeOff      = "off"
-	memoryModeInMem    = "inmem"
-	memoryModeQdrant   = "qdrant"
 )
 
 // Config is runtime configuration.
@@ -35,7 +32,6 @@ type Config struct {
 	EmotionDetectMode           string
 	EmotionDetectTimeoutSeconds int
 
-	MemoryMode                string
 	MemoryTopK                int
 	MemoryVectorDim           int
 	MemorySimilarityThreshold float64
@@ -66,7 +62,6 @@ type envConfig struct {
 	EmotionDetectMode           string `env:"EMOTION_DETECTOR_MODE" envDefault:"rule"`
 	EmotionDetectTimeoutSeconds int    `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
 
-	MemoryMode                string  `env:"MEMORY_MODE" envDefault:"inmem"`
 	MemoryTopK                int     `env:"MEMORY_TOP_K" envDefault:"3"`
 	MemoryVectorDim           int     `env:"MEMORY_VECTOR_DIM" envDefault:"256"`
 	MemorySimilarityThreshold float64 `env:"MEMORY_SIMILARITY_THRESHOLD" envDefault:"0"`
@@ -106,7 +101,6 @@ func Load() (Config, error) {
 		},
 		EmotionDetectMode:           normalizeEmotionMode(e.EmotionDetectMode),
 		EmotionDetectTimeoutSeconds: e.EmotionDetectTimeoutSeconds,
-		MemoryMode:                  normalizeMemoryMode(e.MemoryMode),
 		MemoryTopK:                  e.MemoryTopK,
 		MemoryVectorDim:             e.MemoryVectorDim,
 		MemorySimilarityThreshold:   e.MemorySimilarityThreshold,
@@ -193,16 +187,6 @@ func normalizeEmotionMode(mode string) string {
 		return mode
 	default:
 		return emotionModeRule
-	}
-}
-
-func normalizeMemoryMode(mode string) string {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	switch mode {
-	case memoryModeOff, memoryModeInMem, memoryModeQdrant:
-		return mode
-	default:
-		return memoryModeInMem
 	}
 }
 
