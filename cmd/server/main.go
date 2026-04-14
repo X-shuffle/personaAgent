@@ -64,7 +64,13 @@ func main() {
 	mux.Handle("/ingest", api.IngestHandler{Ingestor: ingestSvc, MaxUploadBytes: cfg.IngestMaxUploadBytes})
 
 	addr := ":" + cfg.Port
-	logger.Info("persona_agent listening", zap.String("addr", addr), zap.String("llm_mode", cfg.LLMMode))
+	logger.Info(
+		"persona_agent listening",
+		zap.String("addr", addr),
+		zap.String("llm_mode", cfg.LLMMode),
+		zap.Int("mcp_servers_total", len(cfg.MCPServers)),
+		zap.Int("mcp_servers_active", len(cfg.ActiveMCPServers)),
+	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		logger.Fatal("server exited", zap.Error(err))
 	}

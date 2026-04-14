@@ -53,6 +53,11 @@ type Config struct {
 	IngestEmbedBatchSize            int
 	IngestSegmentMaxChars           int
 	IngestSegmentMergeWindowSeconds int
+
+	MCPSettingsPath     string
+	MCPSettingsRequired bool
+	MCPServers          map[string]MCPServerConfig
+	ActiveMCPServers    map[string]MCPServerConfig
 }
 
 type envConfig struct {
@@ -89,6 +94,9 @@ type envConfig struct {
 	IngestEmbedBatchSize            int    `env:"INGEST_EMBED_BATCH_SIZE" envDefault:"64"`
 	IngestSegmentMaxChars           int    `env:"INGEST_SEGMENT_MAX_CHARS" envDefault:"500"`
 	IngestSegmentMergeWindowSeconds int    `env:"INGEST_SEGMENT_MERGE_WINDOW_SECONDS" envDefault:"90"`
+
+	MCPSettingsPath     string `env:"MCP_SETTINGS_PATH" envDefault:"mcp_settings.json"`
+	MCPSettingsRequired bool   `env:"MCP_SETTINGS_REQUIRED" envDefault:"false"`
 }
 
 func Load() (Config, error) {
@@ -131,6 +139,10 @@ func Load() (Config, error) {
 		IngestEmbedBatchSize:        e.IngestEmbedBatchSize,
 		IngestSegmentMaxChars:       e.IngestSegmentMaxChars,
 		IngestSegmentMergeWindowSeconds: e.IngestSegmentMergeWindowSeconds,
+		MCPSettingsPath:             strings.TrimSpace(e.MCPSettingsPath),
+		MCPSettingsRequired:         e.MCPSettingsRequired,
+		MCPServers:                  map[string]MCPServerConfig{},
+		ActiveMCPServers:            map[string]MCPServerConfig{},
 	}
 
 	if cfg.Port == "" {
@@ -198,6 +210,16 @@ func Load() (Config, error) {
 	if cfg.IngestSegmentMergeWindowSeconds <= 0 {
 		cfg.IngestSegmentMergeWindowSeconds = 90
 	}
+	if cfg.MCPSettingsPath == "" {
+		cfg.MCPSettingsPath = defaultMCPSettingsPath
+	}
+
+	mcpServers, activeMCPServers, err := loadMCPSettings(cfg.MCPSettingsPath, cfg.MCPSettingsRequired)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.MCPServers = mcpServers
+	cfg.ActiveMCPServers = activeMCPServers
 
 	return cfg, nil
 }

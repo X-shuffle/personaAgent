@@ -103,6 +103,34 @@ func TestLoad_MemoryEmbedTimeoutDefault(t *testing.T) {
 	}
 }
 
+func TestLoad_MCPSettingsOptionalMissing(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("MCP_SETTINGS_PATH", "")
+	t.Setenv("MCP_SETTINGS_REQUIRED", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.MCPSettingsPath != defaultMCPSettingsPath {
+		t.Fatalf("expected default mcp path %q, got %q", defaultMCPSettingsPath, cfg.MCPSettingsPath)
+	}
+	if len(cfg.MCPServers) != 0 || len(cfg.ActiveMCPServers) != 0 {
+		t.Fatalf("expected empty mcp maps, got all=%d active=%d", len(cfg.MCPServers), len(cfg.ActiveMCPServers))
+	}
+}
+
+func TestLoad_MCPSettingsRequiredMissing(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("MCP_SETTINGS_PATH", "./does-not-exist-mcp-settings.json")
+	t.Setenv("MCP_SETTINGS_REQUIRED", "true")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected missing required mcp settings error")
+	}
+}
+
 func TestLoad_LLMTimeoutDefault(t *testing.T) {
 	setRequiredEmbedEnv(t)
 	t.Setenv("LLM_TIMEOUT_SECONDS", "0")
