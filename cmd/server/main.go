@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"persona_agent/internal/emotion"
 	"persona_agent/internal/ingestion"
 	"persona_agent/internal/llm"
+	"persona_agent/internal/mcp/runtime"
 	"persona_agent/internal/memory"
 	"persona_agent/internal/persona"
 	"persona_agent/internal/prompt"
@@ -46,6 +48,14 @@ func main() {
 		llmClient = llm.MockClient{}
 	}
 
+	mcpManager := runtime.NewManager(logger)
+	mcpReport := mcpManager.Start(context.Background(), cfg.ActiveMCPServers)
+	defer func() {
+		if err := mcpManager.Close(); err != nil {
+			logger.Warn("mcp manager close failed", zap.Error(err))
+		}
+	}()
+
 	memorySvc, ingestSvc := buildMemoryAndIngestionServices(cfg, logger)
 
 	emotionDetector := buildEmotionDetector(cfg, llmClient)
@@ -70,6 +80,9 @@ func main() {
 		zap.String("llm_mode", cfg.LLMMode),
 		zap.Int("mcp_servers_total", len(cfg.MCPServers)),
 		zap.Int("mcp_servers_active", len(cfg.ActiveMCPServers)),
+		zap.Int("mcp_servers_configured", mcpReport.Configured),
+		zap.Int("mcp_servers_connected", mcpReport.Connected),
+		zap.Int("mcp_servers_failed", len(mcpReport.FailedByServer)),
 	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		logger.Fatal("server exited", zap.Error(err))
