@@ -143,3 +143,89 @@ func TestLoad_LLMTimeoutDefault(t *testing.T) {
 		t.Fatalf("expected llm timeout default 20, got %d", cfg.LLMTimeoutSeconds)
 	}
 }
+
+func TestLoad_ToolMaxExecRoundsDefault(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("TOOL_MAX_EXEC_ROUNDS", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.ToolMaxExecRounds != 3 {
+		t.Fatalf("expected tool max exec rounds default 3, got %d", cfg.ToolMaxExecRounds)
+	}
+}
+
+func TestLoad_ToolMaxExecRoundsFromEnv(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("TOOL_MAX_EXEC_ROUNDS", "5")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.ToolMaxExecRounds != 5 {
+		t.Fatalf("expected tool max exec rounds 5, got %d", cfg.ToolMaxExecRounds)
+	}
+}
+
+func TestLoad_ToolMaxExecRoundsInvalidFallback(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("TOOL_MAX_EXEC_ROUNDS", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.ToolMaxExecRounds != 3 {
+		t.Fatalf("expected tool max exec rounds fallback 3, got %d", cfg.ToolMaxExecRounds)
+	}
+}
+
+func TestLoad_LLMProviderAndNormalizationDefaults(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("LLM_PROVIDER", "")
+	t.Setenv("LLM_TOOL_PAYLOAD_NORMALIZATION", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.LLMProvider != "generic" {
+		t.Fatalf("expected default provider generic, got %q", cfg.LLMProvider)
+	}
+	if cfg.LLMToolPayloadNormalization != "auto" {
+		t.Fatalf("expected default normalization auto, got %q", cfg.LLMToolPayloadNormalization)
+	}
+}
+
+func TestLoad_LLMToolPayloadNormalizationFromEnv(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("LLM_PROVIDER", "MiniMax")
+	t.Setenv("LLM_TOOL_PAYLOAD_NORMALIZATION", "ON")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.LLMProvider != "minimax" {
+		t.Fatalf("expected lowercase provider minimax, got %q", cfg.LLMProvider)
+	}
+	if cfg.LLMToolPayloadNormalization != "on" {
+		t.Fatalf("expected normalization on, got %q", cfg.LLMToolPayloadNormalization)
+	}
+}
+
+func TestLoad_LLMToolPayloadNormalizationInvalidFallback(t *testing.T) {
+	setRequiredEmbedEnv(t)
+	t.Setenv("LLM_TOOL_PAYLOAD_NORMALIZATION", "invalid-mode")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.LLMToolPayloadNormalization != "auto" {
+		t.Fatalf("expected normalization fallback auto, got %q", cfg.LLMToolPayloadNormalization)
+	}
+}

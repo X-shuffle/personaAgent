@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	mcptypes "github.com/mark3labs/mcp-go/mcp"
+	"go.uber.org/zap"
 
 	"persona_agent/internal/config"
 )
@@ -36,7 +37,7 @@ func (f *fakeClient) Close() error {
 }
 
 func TestManagerStartAndCallTool(t *testing.T) {
-	manager := NewManagerWithFactory(nil, func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
+	manager := NewManagerWithFactory(zap.NewNop(), func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
 		return &fakeClient{tools: []mcptypes.Tool{{Name: "ping"}}}, nil
 	})
 
@@ -57,7 +58,7 @@ func TestManagerStartAndCallTool(t *testing.T) {
 }
 
 func TestManagerStartFailSoft(t *testing.T) {
-	manager := NewManagerWithFactory(nil, func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
+	manager := NewManagerWithFactory(zap.NewNop(), func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
 		if serverName == "bad" {
 			return nil, errors.New("connect failed")
 		}
@@ -84,7 +85,7 @@ func TestManagerStartFailSoft(t *testing.T) {
 }
 
 func TestManagerCloseAggregatesErrors(t *testing.T) {
-	manager := NewManagerWithFactory(nil, func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
+	manager := NewManagerWithFactory(zap.NewNop(), func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
 		if serverName == "x" {
 			return &fakeClient{closeErr: errors.New("close x")}, nil
 		}
@@ -102,5 +103,64 @@ func TestManagerCloseAggregatesErrors(t *testing.T) {
 	}
 	if manager.ConnectedServerCount() != 0 {
 		t.Fatalf("expected no connected servers after close")
+	}
+}
+
+func TestManagerToolCatalogPopulatedOnStart(t *testing.T) {
+	manager := NewManagerWithFactory(zap.NewNop(), func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
+		return &fakeClient{tools: []mcptypes.Tool{{Name: "ping"}, {Name: "weather"}}}, nil
+	})
+
+	_ = manager.Start(context.Background(), map[string]config.MCPServerConfig{
+		"alpha": {Transport: "stdio", Command: "dummy"},
+	})
+
+	catalog := manager.ToolCatalog()
+	tools := catalog["alpha"]
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools in catalog, got %d", len(tools))
+	}
+	if tools[0].Name != "ping" || tools[1].Name != "weather" {
+		t.Fatalf("unexpected tools in catalog: %+v", tools)
+	}
+}
+
+func TestManagerToolCatalogExcludesFailedServers(t *testing.T) {
+	manager := NewManagerWithFactory(zap.NewNop(), func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
+		if serverName == "bad" {
+			return nil, errors.New("connect failed")
+		}
+		return &fakeClient{tools: []mcptypes.Tool{{Name: "ping"}}}, nil
+	})
+
+	_ = manager.Start(context.Background(), map[string]config.MCPServerConfig{
+		"bad":  {Transport: "http", URL: "https://bad"},
+		"good": {Transport: "stdio", Command: "dummy"},
+	})
+
+	catalog := manager.ToolCatalog()
+	if _, ok := catalog["bad"]; ok {
+		t.Fatalf("bad server should not be in catalog")
+	}
+	if len(catalog["good"]) != 1 {
+		t.Fatalf("good server should have one tool")
+	}
+}
+
+func TestManagerCloseClearsToolCatalog(t *testing.T) {
+	manager := NewManagerWithFactory(zap.NewNop(), func(ctx context.Context, serverName string, server config.MCPServerConfig) (Client, error) {
+		return &fakeClient{tools: []mcptypes.Tool{{Name: "ping"}}}, nil
+	})
+
+	_ = manager.Start(context.Background(), map[string]config.MCPServerConfig{
+		"alpha": {Transport: "stdio", Command: "dummy"},
+	})
+	if len(manager.ToolCatalog()) != 1 {
+		t.Fatalf("expected non-empty catalog before close")
+	}
+
+	_ = manager.Close()
+	if len(manager.ToolCatalog()) != 0 {
+		t.Fatalf("expected empty catalog after close")
 	}
 }

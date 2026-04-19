@@ -3,9 +3,14 @@ package agent
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	mcptypes "github.com/mark3labs/mcp-go/mcp"
+	"go.uber.org/zap"
+
+	"persona_agent/internal/agent/tooling"
 	"persona_agent/internal/model"
 )
 
@@ -33,15 +38,25 @@ func (f *fakePromptBuilder) Build(_ model.Persona, memories []model.Memory, emot
 }
 
 type fakeLLMClient struct {
-	resp model.LLMResponse
-	err  error
+	responses []model.LLMResponse
+	err       error
+	calls     int
+	requests  []model.LLMRequest
 }
 
-func (f fakeLLMClient) Generate(_ context.Context, _ model.LLMRequest) (model.LLMResponse, error) {
+func (f *fakeLLMClient) Generate(_ context.Context, req model.LLMRequest) (model.LLMResponse, error) {
+	f.calls++
+	f.requests = append(f.requests, req)
 	if f.err != nil {
 		return model.LLMResponse{}, f.err
 	}
-	return f.resp, nil
+	if len(f.responses) == 0 {
+		return model.LLMResponse{}, nil
+	}
+	if f.calls <= len(f.responses) {
+		return f.responses[f.calls-1], nil
+	}
+	return f.responses[len(f.responses)-1], nil
 }
 
 type fakeEmotionDetector struct {
@@ -100,16 +115,247 @@ func waitForStore(t *testing.T, ch <-chan struct{}) {
 	}
 }
 
+type fakeToolCaller struct {
+	mu      sync.Mutex
+	result  *mcptypes.CallToolResult
+	err     error
+	calls   int
+	records []toolCallRecord
+	callFn  func(serverName, toolName string, args map[string]any) (*mcptypes.CallToolResult, error)
+}
+
+type toolCallRecord struct {
+	server string
+	tool   string
+	args   map[string]any
+}
+
+func (f *fakeToolCaller) CallTool(_ context.Context, serverName, toolName string, args map[string]any) (*mcptypes.CallToolResult, error) {
+	f.mu.Lock()
+	f.calls++
+	f.records = append(f.records, toolCallRecord{server: serverName, tool: toolName, args: args})
+	f.mu.Unlock()
+
+	if f.callFn != nil {
+		return f.callFn(serverName, toolName, args)
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.result != nil {
+		return f.result, nil
+	}
+	return &mcptypes.CallToolResult{}, nil
+}
+
+type fakeToolCatalog struct {
+	catalog map[string][]mcptypes.Tool
+}
+
+func (f fakeToolCatalog) ToolCatalog() map[string][]mcptypes.Tool {
+	out := make(map[string][]mcptypes.Tool, len(f.catalog))
+	for server, tools := range f.catalog {
+		cloned := make([]mcptypes.Tool, len(tools))
+		copy(cloned, tools)
+		out[server] = cloned
+	}
+	return out
+}
+
+func newTestOrchestrator(base Orchestrator) Orchestrator {
+	base.Logger = zap.NewNop()
+	return NewOrchestrator(base)
+}
+
+func TestOrchestratorChat_NativeFinalWithoutToolCall(t *testing.T) {
+	llm := &fakeLLMClient{responses: []model.LLMResponse{{Text: "hello"}}}
+	toolCaller := &fakeToolCaller{}
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider:   fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
+		PromptBuilder:     &fakePromptBuilder{},
+		ToolCaller:        toolCaller,
+		ToolCatalog:       fakeToolCatalog{catalog: map[string][]mcptypes.Tool{"demo_server": {{Name: "weather"}}}},
+		ToolMaxExecRounds: 3,
+		LLMClient:         llm,
+	})
+
+	got, err := o.Chat(context.Background(), "s1", "hi")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected hello, got %s", got)
+	}
+	if toolCaller.calls != 0 {
+		t.Fatalf("expected no tool calls, got %d", toolCaller.calls)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("expected 1 llm call, got %d", llm.calls)
+	}
+}
+
+func TestOrchestratorChat_NativeSingleRoundMultiTool(t *testing.T) {
+	llm := &fakeLLMClient{responses: []model.LLMResponse{
+		{ToolCalls: []model.LLMToolCall{
+			{ID: "c1", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "weather"), Arguments: `{"city":"shanghai"}`}},
+			{ID: "c2", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "time"), Arguments: `{}`}},
+		}},
+		{Text: "hello"},
+	}}
+	toolCaller := &fakeToolCaller{result: &mcptypes.CallToolResult{Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: "ok"}}}}
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider:   fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
+		PromptBuilder:     &fakePromptBuilder{},
+		ToolCaller:        toolCaller,
+		ToolCatalog:       fakeToolCatalog{catalog: map[string][]mcptypes.Tool{"demo_server": {{Name: "weather"}, {Name: "time"}}}},
+		ToolMaxExecRounds: 3,
+		LLMClient:         llm,
+	})
+
+	got, err := o.Chat(context.Background(), "s1", "hi")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected hello, got %s", got)
+	}
+	if toolCaller.calls != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", toolCaller.calls)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("expected 2 llm calls, got %d", llm.calls)
+	}
+}
+
+func TestOrchestratorChat_NativeMultiRound(t *testing.T) {
+	llm := &fakeLLMClient{responses: []model.LLMResponse{
+		{ToolCalls: []model.LLMToolCall{{ID: "r1", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "weather"), Arguments: `{}`}}}},
+		{ToolCalls: []model.LLMToolCall{{ID: "r2", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "news"), Arguments: `{}`}}}},
+		{Text: "hello"},
+	}}
+	toolCaller := &fakeToolCaller{result: &mcptypes.CallToolResult{Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: "ok"}}}}
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider:   fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
+		PromptBuilder:     &fakePromptBuilder{},
+		ToolCaller:        toolCaller,
+		ToolCatalog:       fakeToolCatalog{catalog: map[string][]mcptypes.Tool{"demo_server": {{Name: "weather"}, {Name: "news"}}}},
+		ToolMaxExecRounds: 3,
+		LLMClient:         llm,
+	})
+
+	got, err := o.Chat(context.Background(), "s1", "hi")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected hello, got %s", got)
+	}
+	if toolCaller.calls != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", toolCaller.calls)
+	}
+	if llm.calls != 3 {
+		t.Fatalf("expected 3 llm calls, got %d", llm.calls)
+	}
+}
+
+func TestOrchestratorChat_NativeRespectsMaxRounds(t *testing.T) {
+	llm := &fakeLLMClient{responses: []model.LLMResponse{
+		{ToolCalls: []model.LLMToolCall{{ID: "r1", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "weather"), Arguments: `{}`}}}},
+		{ToolCalls: []model.LLMToolCall{{ID: "r2", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "news"), Arguments: `{}`}}}},
+		{ToolCalls: []model.LLMToolCall{{ID: "r3", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "stocks"), Arguments: `{}`}}}},
+	}}
+	toolCaller := &fakeToolCaller{result: &mcptypes.CallToolResult{Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: "ok"}}}}
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider:   fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
+		PromptBuilder:     &fakePromptBuilder{},
+		ToolCaller:        toolCaller,
+		ToolCatalog:       fakeToolCatalog{catalog: map[string][]mcptypes.Tool{"demo_server": {{Name: "weather"}, {Name: "news"}, {Name: "stocks"}}}},
+		ToolMaxExecRounds: 2,
+		LLMClient:         llm,
+	})
+
+	_, err := o.Chat(context.Background(), "s1", "hi")
+	if !errors.Is(err, ErrUpstreamLLM) {
+		t.Fatalf("expected ErrUpstreamLLM, got %v", err)
+	}
+	if toolCaller.calls != 2 {
+		t.Fatalf("expected 2 tool calls due to max rounds, got %d", toolCaller.calls)
+	}
+}
+
+func TestOrchestratorChat_NativeInvalidToolArgsDegradesGracefully(t *testing.T) {
+	llm := &fakeLLMClient{responses: []model.LLMResponse{
+		{ToolCalls: []model.LLMToolCall{{ID: "c1", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "weather"), Arguments: `{invalid`}}}},
+		{Text: "hello"},
+	}}
+	toolCaller := &fakeToolCaller{}
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider:   fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
+		PromptBuilder:     &fakePromptBuilder{},
+		ToolCaller:        toolCaller,
+		ToolCatalog:       fakeToolCatalog{catalog: map[string][]mcptypes.Tool{"demo_server": {{Name: "weather"}}}},
+		ToolMaxExecRounds: 3,
+		LLMClient:         llm,
+	})
+
+	got, err := o.Chat(context.Background(), "s1", "hi")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected hello, got %s", got)
+	}
+	if toolCaller.calls != 0 {
+		t.Fatalf("expected no actual tool call on invalid args, got %d", toolCaller.calls)
+	}
+}
+
+func TestOrchestratorChat_NativePartialToolFailureDegradesGracefully(t *testing.T) {
+	llm := &fakeLLMClient{responses: []model.LLMResponse{
+		{ToolCalls: []model.LLMToolCall{
+			{ID: "c1", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "weather"), Arguments: `{}`}},
+			{ID: "c2", Type: "function", Function: model.LLMFunctionCall{Name: tooling.EncodeFunctionName("demo_server", "news"), Arguments: `{}`}},
+		}},
+		{Text: "hello"},
+	}}
+	toolCaller := &fakeToolCaller{callFn: func(serverName, toolName string, args map[string]any) (*mcptypes.CallToolResult, error) {
+		if toolName == "news" {
+			return nil, errors.New("tool failed")
+		}
+		return &mcptypes.CallToolResult{Content: []mcptypes.Content{mcptypes.TextContent{Type: "text", Text: "ok"}}}, nil
+	}}
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider:   fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
+		PromptBuilder:     &fakePromptBuilder{},
+		ToolCaller:        toolCaller,
+		ToolCatalog:       fakeToolCatalog{catalog: map[string][]mcptypes.Tool{"demo_server": {{Name: "weather"}, {Name: "news"}}}},
+		ToolMaxExecRounds: 3,
+		LLMClient:         llm,
+	})
+
+	got, err := o.Chat(context.Background(), "s1", "hi")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected hello, got %s", got)
+	}
+	if toolCaller.calls != 2 {
+		t.Fatalf("expected both tools attempted, got %d", toolCaller.calls)
+	}
+}
+
 func TestOrchestratorChat_OK(t *testing.T) {
 	builder := &fakePromptBuilder{}
 	memorySvc := &fakeMemoryService{retrieveResult: []model.Memory{{Content: "m1"}}, storeCh: make(chan struct{}, 1)}
-	o := Orchestrator{
+	llm := &fakeLLMClient{responses: []model.LLMResponse{{Text: "hello"}}}
+	o := newTestOrchestrator(Orchestrator{
 		PersonaProvider: fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
 		PromptBuilder:   builder,
 		MemoryService:   memorySvc,
 		EmotionDetector: fakeEmotionDetector{state: model.EmotionState{Label: "sad", Intensity: 0.8}},
-		LLMClient:       fakeLLMClient{resp: model.LLMResponse{Text: "hello"}},
-	}
+		LLMClient:       llm,
+	})
 
 	got, err := o.Chat(context.Background(), "s1", "hi")
 	if err != nil {
@@ -139,13 +385,14 @@ func TestOrchestratorChat_OK(t *testing.T) {
 func TestOrchestratorChat_DetectFailureDegradesGracefully(t *testing.T) {
 	builder := &fakePromptBuilder{}
 	memorySvc := &fakeMemoryService{storeCh: make(chan struct{}, 1)}
-	o := Orchestrator{
+	llm := &fakeLLMClient{responses: []model.LLMResponse{{Text: "hello"}}}
+	o := newTestOrchestrator(Orchestrator{
 		PersonaProvider: fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
 		PromptBuilder:   builder,
 		MemoryService:   memorySvc,
 		EmotionDetector: fakeEmotionDetector{err: errors.New("fail")},
-		LLMClient:       fakeLLMClient{resp: model.LLMResponse{Text: "hello"}},
-	}
+		LLMClient:       llm,
+	})
 
 	_, err := o.Chat(context.Background(), "s1", "hi")
 	if err != nil {
@@ -161,7 +408,7 @@ func TestOrchestratorChat_DetectFailureDegradesGracefully(t *testing.T) {
 }
 
 func TestOrchestratorChat_InvalidInput(t *testing.T) {
-	o := Orchestrator{}
+	o := newTestOrchestrator(Orchestrator{})
 	_, err := o.Chat(context.Background(), "", "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
@@ -169,13 +416,13 @@ func TestOrchestratorChat_InvalidInput(t *testing.T) {
 }
 
 func TestOrchestratorChat_UpstreamError(t *testing.T) {
-	builder := &fakePromptBuilder{}
-	o := Orchestrator{
+	llm := &fakeLLMClient{err: errors.New("boom")}
+	o := newTestOrchestrator(Orchestrator{
 		PersonaProvider: fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
-		PromptBuilder:   builder,
+		PromptBuilder:   &fakePromptBuilder{},
 		MemoryService:   &fakeMemoryService{},
-		LLMClient:       fakeLLMClient{err: errors.New("boom")},
-	}
+		LLMClient:       llm,
+	})
 	_, err := o.Chat(context.Background(), "s1", "hi")
 	if !errors.Is(err, ErrUpstreamLLM) {
 		t.Fatalf("expected ErrUpstreamLLM, got %v", err)
@@ -185,12 +432,13 @@ func TestOrchestratorChat_UpstreamError(t *testing.T) {
 func TestOrchestratorChat_RetrieveFailureDegradesGracefully(t *testing.T) {
 	builder := &fakePromptBuilder{}
 	memorySvc := &fakeMemoryService{retrieveErr: errors.New("fail")}
-	o := Orchestrator{
+	llm := &fakeLLMClient{responses: []model.LLMResponse{{Text: "hello"}}}
+	o := newTestOrchestrator(Orchestrator{
 		PersonaProvider: fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
 		PromptBuilder:   builder,
 		MemoryService:   memorySvc,
-		LLMClient:       fakeLLMClient{resp: model.LLMResponse{Text: "hello"}},
-	}
+		LLMClient:       llm,
+	})
 
 	_, err := o.Chat(context.Background(), "s1", "hi")
 	if err != nil {
@@ -204,12 +452,13 @@ func TestOrchestratorChat_RetrieveFailureDegradesGracefully(t *testing.T) {
 func TestOrchestratorChat_StoreFailureDegradesGracefully(t *testing.T) {
 	builder := &fakePromptBuilder{}
 	memorySvc := &fakeMemoryService{storeErr: errors.New("fail"), storeCh: make(chan struct{}, 1)}
-	o := Orchestrator{
+	llm := &fakeLLMClient{responses: []model.LLMResponse{{Text: "hello"}}}
+	o := newTestOrchestrator(Orchestrator{
 		PersonaProvider: fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
 		PromptBuilder:   builder,
 		MemoryService:   memorySvc,
-		LLMClient:       fakeLLMClient{resp: model.LLMResponse{Text: "hello"}},
-	}
+		LLMClient:       llm,
+	})
 
 	_, err := o.Chat(context.Background(), "s1", "hi")
 	if err != nil {
@@ -224,12 +473,13 @@ func TestOrchestratorChat_StoreFailureDegradesGracefully(t *testing.T) {
 func TestOrchestratorChat_StoreUsesDetachedContext(t *testing.T) {
 	builder := &fakePromptBuilder{}
 	memorySvc := &fakeMemoryService{storeCh: make(chan struct{}, 1)}
-	o := Orchestrator{
+	llm := &fakeLLMClient{responses: []model.LLMResponse{{Text: "hello"}}}
+	o := newTestOrchestrator(Orchestrator{
 		PersonaProvider: fakePersonaProvider{persona: model.Persona{Tone: "warm"}},
 		PromptBuilder:   builder,
 		MemoryService:   memorySvc,
-		LLMClient:       fakeLLMClient{resp: model.LLMResponse{Text: "hello"}},
-	}
+		LLMClient:       llm,
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_, err := o.Chat(ctx, "s1", "hi")

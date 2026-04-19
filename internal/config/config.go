@@ -26,6 +26,15 @@ type Config struct {
 	LLMEndpoint string
 	LLMAPIKey   string
 	LLMModel    string
+	// LLMProvider 用于标识上游提供商（如 generic/minimax/openai）。
+	// 作用：驱动 provider-aware 的兼容策略选择，避免把某家上游的 workaround 误用于全部 provider。
+	LLMProvider string
+	// LLMToolPayloadNormalization 控制是否对 tool-call 历史消息做兼容规范化（id/arguments）。
+	// 作用：
+	// - on  : 强制开启，适合已知需要兼容修复的 provider；
+	// - off : 强制关闭，避免对严格 provider 进行不必要改写；
+	// - auto: 按 provider 默认策略决定，便于后续切换上游时平滑运行。
+	LLMToolPayloadNormalization string
 	// LLMTimeoutSeconds 控制 HTTP 模式下单次 LLM 请求超时（秒）。
 	LLMTimeoutSeconds int
 	LogLevel    string
@@ -58,6 +67,8 @@ type Config struct {
 	MCPSettingsRequired bool
 	MCPServers          map[string]MCPServerConfig
 	ActiveMCPServers    map[string]MCPServerConfig
+
+	ToolMaxExecRounds int
 }
 
 type envConfig struct {
@@ -66,6 +77,8 @@ type envConfig struct {
 	LLMEndpoint    string `env:"LLM_ENDPOINT"`
 	LLMAPIKey      string `env:"LLM_API_KEY"`
 	LLMModel       string `env:"LLM_MODEL" envDefault:"default"`
+	LLMProvider    string `env:"LLM_PROVIDER" envDefault:"generic"`
+	LLMToolPayloadNormalization string `env:"LLM_TOOL_PAYLOAD_NORMALIZATION" envDefault:"auto"`
 	LLMTimeoutSeconds int `env:"LLM_TIMEOUT_SECONDS" envDefault:"20"`
 	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
 	PersonaTone    string `env:"PERSONA_TONE" envDefault:"warm"`
@@ -97,6 +110,7 @@ type envConfig struct {
 
 	MCPSettingsPath     string `env:"MCP_SETTINGS_PATH" envDefault:"mcp_settings.json"`
 	MCPSettingsRequired bool   `env:"MCP_SETTINGS_REQUIRED" envDefault:"false"`
+	ToolMaxExecRounds   int    `env:"TOOL_MAX_EXEC_ROUNDS" envDefault:"3"`
 }
 
 func Load() (Config, error) {
@@ -113,6 +127,8 @@ func Load() (Config, error) {
 		LLMEndpoint: strings.TrimSpace(e.LLMEndpoint),
 		LLMAPIKey:   strings.TrimSpace(e.LLMAPIKey),
 		LLMModel:    strings.TrimSpace(e.LLMModel),
+		LLMProvider: strings.ToLower(strings.TrimSpace(e.LLMProvider)),
+		LLMToolPayloadNormalization: normalizeToolPayloadNormalizationMode(e.LLMToolPayloadNormalization),
 		LLMTimeoutSeconds: e.LLMTimeoutSeconds,
 		LogLevel:    normalizeLogLevel(e.LogLevel),
 		Persona: model.Persona{
@@ -143,6 +159,7 @@ func Load() (Config, error) {
 		MCPSettingsRequired:         e.MCPSettingsRequired,
 		MCPServers:                  map[string]MCPServerConfig{},
 		ActiveMCPServers:            map[string]MCPServerConfig{},
+		ToolMaxExecRounds:           e.ToolMaxExecRounds,
 	}
 
 	if cfg.Port == "" {
@@ -150,6 +167,9 @@ func Load() (Config, error) {
 	}
 	if cfg.LLMMode == "" {
 		cfg.LLMMode = modeMock
+	}
+	if cfg.LLMProvider == "" {
+		cfg.LLMProvider = "generic"
 	}
 	if cfg.LLMTimeoutSeconds <= 0 {
 		// 防止误配 0/负数导致请求无超时约束。
@@ -213,6 +233,9 @@ func Load() (Config, error) {
 	if cfg.MCPSettingsPath == "" {
 		cfg.MCPSettingsPath = defaultMCPSettingsPath
 	}
+	if cfg.ToolMaxExecRounds <= 0 {
+		cfg.ToolMaxExecRounds = 3
+	}
 
 	mcpServers, activeMCPServers, err := loadMCPSettings(cfg.MCPSettingsPath, cfg.MCPSettingsRequired)
 	if err != nil {
@@ -241,6 +264,16 @@ func normalizeEmotionMode(mode string) string {
 		return mode
 	default:
 		return emotionModeRule
+	}
+}
+
+func normalizeToolPayloadNormalizationMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "on", "off", "auto":
+		return mode
+	default:
+		return "auto"
 	}
 }
 

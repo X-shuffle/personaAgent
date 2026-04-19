@@ -37,13 +37,15 @@ func main() {
 	var llmClient llm.Client
 	if cfg.LLMMode == "http" {
 		// HTTP 模式下，超时由 .env 中的 LLM_TIMEOUT_SECONDS 控制，便于按环境调参。
-		llmClient = llm.HTTPClient{
-			Endpoint:   cfg.LLMEndpoint,
-			APIKey:     cfg.LLMAPIKey,
-			Model:      cfg.LLMModel,
-			HTTPClient: &http.Client{Timeout: time.Duration(cfg.LLMTimeoutSeconds) * time.Second},
-			Logger:     logger,
-		}
+		llmClient = llm.NewHTTPClient(llm.HTTPClient{
+			Endpoint:                 cfg.LLMEndpoint,
+			APIKey:                   cfg.LLMAPIKey,
+			Model:                    cfg.LLMModel,
+			Provider:                 cfg.LLMProvider,
+			ToolPayloadNormalization: cfg.LLMToolPayloadNormalization,
+			HTTPClient:               &http.Client{Timeout: time.Duration(cfg.LLMTimeoutSeconds) * time.Second},
+			Logger:                   logger,
+		})
 	} else {
 		llmClient = llm.MockClient{}
 	}
@@ -60,14 +62,17 @@ func main() {
 
 	emotionDetector := buildEmotionDetector(cfg, llmClient)
 
-	orch := agent.Orchestrator{
-		PersonaProvider: persona.StaticProvider{Persona: cfg.Persona},
-		PromptBuilder:   prompt.DefaultBuilder{},
-		MemoryService:   memorySvc,
-		EmotionDetector: emotionDetector,
-		LLMClient:       llmClient,
-		Logger:          logger,
-	}
+	orch := agent.NewOrchestrator(agent.Orchestrator{
+		PersonaProvider:   persona.StaticProvider{Persona: cfg.Persona},
+		PromptBuilder:     prompt.DefaultBuilder{},
+		MemoryService:     memorySvc,
+		EmotionDetector:   emotionDetector,
+		ToolCaller:        mcpManager,
+		ToolCatalog:       mcpManager,
+		ToolMaxExecRounds: cfg.ToolMaxExecRounds,
+		LLMClient:         llmClient,
+		Logger:            logger,
+	})
 
 	mux := http.NewServeMux()
 	mux.Handle("/chat", api.ChatHandler{Orchestrator: orch})

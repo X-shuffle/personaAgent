@@ -43,8 +43,33 @@ type Persona struct {
 
 // LLMMessage is one message sent to the model.
 type LLMMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content,omitempty"`
+	Name       string        `json:"name,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+	ToolCalls  []LLMToolCall `json:"tool_calls,omitempty"`
+}
+
+type LLMFunctionSpec struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+type LLMTool struct {
+	Type     string          `json:"type"`
+	Function LLMFunctionSpec `json:"function"`
+}
+
+type LLMFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type LLMToolCall struct {
+	ID       string          `json:"id"`
+	Type     string          `json:"type"`
+	Function LLMFunctionCall `json:"function"`
 }
 
 // LLMRequest is a generic chat-completion request.
@@ -52,12 +77,16 @@ type LLMRequest struct {
 	Messages    []LLMMessage `json:"messages"`
 	Temperature float64      `json:"temperature,omitempty"`
 	MaxTokens   int          `json:"max_tokens,omitempty"`
+	Tools       []LLMTool    `json:"tools,omitempty"`
+	ToolChoice  string       `json:"tool_choice,omitempty"`
 }
 
 // LLMResponse is a generic model response.
 type LLMResponse struct {
-	Text  string `json:"text"`
-	Model string `json:"model,omitempty"`
+	Text         string        `json:"text"`
+	Model        string        `json:"model,omitempty"`
+	ToolCalls    []LLMToolCall `json:"tool_calls,omitempty"`
+	FinishReason string        `json:"finish_reason,omitempty"`
 }
 
 // EmotionState is the detected emotional state for the current user turn.
