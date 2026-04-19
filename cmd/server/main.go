@@ -107,7 +107,7 @@ func buildMemoryAndIngestionServices(cfg config.Config, logger *zap.Logger) (mem
 	}
 	store := memory.NewQdrantStore(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, cfg.MemoryVectorDim)
 
-	memorySvc := memory.NewService(store, embedder, logger, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold)
+	memorySvc := memory.NewService(store, embedder, logger, cfg.MemoryTopK, 0, cfg.MemorySimilarityThreshold, cfg.MemoryShortTermSize)
 	if !cfg.IngestEnabled {
 		// 未开启摄入时仍保留记忆检索能力，只关闭 /ingest 的实际写入流程。
 		return memorySvc, ingestion.NoopService{}

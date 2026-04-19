@@ -44,6 +44,7 @@ type Config struct {
 	EmotionDetectTimeoutSeconds int
 
 	MemoryTopK                int
+	MemoryShortTermSize       int
 	MemoryVectorDim           int
 	MemorySimilarityThreshold float64
 	// MemoryEmbedEndpoint 是 embedding API 地址，服务启动时要求必填。
@@ -90,6 +91,7 @@ type envConfig struct {
 	EmotionDetectTimeoutSeconds int    `env:"EMOTION_DETECT_TIMEOUT_SECONDS" envDefault:"20"`
 
 	MemoryTopK                int     `env:"MEMORY_TOP_K" envDefault:"3"`
+	MemoryShortTermSize       int     `env:"MEMORY_SHORT_TERM_SIZE" envDefault:"3"`
 	MemoryVectorDim           int     `env:"MEMORY_VECTOR_DIM" envDefault:"256"`
 	MemorySimilarityThreshold float64 `env:"MEMORY_SIMILARITY_THRESHOLD" envDefault:"0"`
 	MemoryEmbedEndpoint       string  `env:"MEMORY_EMBED_ENDPOINT"`
@@ -140,6 +142,7 @@ func Load() (Config, error) {
 		EmotionDetectMode:           normalizeEmotionMode(e.EmotionDetectMode),
 		EmotionDetectTimeoutSeconds: e.EmotionDetectTimeoutSeconds,
 		MemoryTopK:                  e.MemoryTopK,
+		MemoryShortTermSize:         e.MemoryShortTermSize,
 		MemoryVectorDim:             e.MemoryVectorDim,
 		MemorySimilarityThreshold:   e.MemorySimilarityThreshold,
 		MemoryEmbedEndpoint:         strings.TrimSpace(e.MemoryEmbedEndpoint),
@@ -192,6 +195,9 @@ func Load() (Config, error) {
 	}
 	if cfg.MemoryTopK <= 0 {
 		cfg.MemoryTopK = 3
+	}
+	if cfg.MemoryShortTermSize <= 0 {
+		cfg.MemoryShortTermSize = cfg.MemoryTopK
 	}
 	if cfg.MemoryVectorDim <= 0 {
 		cfg.MemoryVectorDim = 256

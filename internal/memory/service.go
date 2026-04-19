@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -21,10 +22,14 @@ type DefaultService struct {
 	topK          int
 	minImportance float64
 	minSimilarity float64
+	shortTermSize int
 	now           func() time.Time
+
+	cacheMu         sync.RWMutex
+	shortTermBySess map[string][]model.Memory
 }
 
-func NewService(store Store, embedder Embedder, logger *zap.Logger, topK int, minImportance, minSimilarity float64) *DefaultService {
+func NewService(store Store, embedder Embedder, logger *zap.Logger, topK int, minImportance, minSimilarity float64, shortTermSize int) *DefaultService {
 	if logger == nil {
 		// 统一要求外部注入 logger，避免运行时到处做 nil 判断。
 		panic("memory logger is nil")
@@ -38,14 +43,19 @@ func NewService(store Store, embedder Embedder, logger *zap.Logger, topK int, mi
 	if minSimilarity > 1 {
 		minSimilarity = 1
 	}
+	if shortTermSize <= 0 {
+		shortTermSize = topK
+	}
 	return &DefaultService{
-		store:         store,
-		embedder:      embedder,
-		logger:        logger,
-		topK:          topK,
-		minImportance: minImportance,
-		minSimilarity: minSimilarity,
-		now:           time.Now,
+		store:           store,
+		embedder:        embedder,
+		logger:          logger,
+		topK:            topK,
+		minImportance:   minImportance,
+		minSimilarity:   minSimilarity,
+		shortTermSize:   shortTermSize,
+		now:             time.Now,
+		shortTermBySess: make(map[string][]model.Memory),
 	}
 }
 
@@ -94,7 +104,18 @@ func (s *DefaultService) Retrieve(ctx context.Context, sessionID, userInput stri
 		)
 		out = append(out, m.Memory)
 	}
-	return out, nil
+	if len(out) > 0 {
+		return out, nil
+	}
+
+	recent := s.loadShortTerm(sessionID, s.topK)
+	if len(recent) > 0 {
+		s.logger.Debug("memory retrieve fallback short-term cache",
+			zap.String("session_id", sessionID),
+			zap.Int("count", len(recent)),
+		)
+	}
+	return recent, nil
 }
 
 func (s *DefaultService) StoreTurn(ctx context.Context, sessionID, userInput, assistantOutput string, emotion model.EmotionState) error {
@@ -124,10 +145,41 @@ func (s *DefaultService) StoreTurn(ctx context.Context, sessionID, userInput, as
 		Timestamp:  s.now().Unix(),
 		Importance: 0.5,
 	}
+	s.pushShortTerm(memory)
 	if err := s.store.Upsert(ctx, []model.Memory{memory}); err != nil {
 		return fmt.Errorf("upsert memory: %w", err)
 	}
 	return nil
+}
+
+func (s *DefaultService) pushShortTerm(memory model.Memory) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	items := append([]model.Memory{memory}, s.shortTermBySess[memory.SessionID]...)
+	if len(items) > s.shortTermSize {
+		items = items[:s.shortTermSize]
+	}
+	s.shortTermBySess[memory.SessionID] = items
+}
+
+func (s *DefaultService) loadShortTerm(sessionID string, limit int) []model.Memory {
+	if limit <= 0 {
+		limit = 3
+	}
+
+	s.cacheMu.RLock()
+	items := s.shortTermBySess[sessionID]
+	if len(items) == 0 {
+		s.cacheMu.RUnlock()
+		return nil
+	}
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	out := append([]model.Memory(nil), items...)
+	s.cacheMu.RUnlock()
+	return out
 }
 
 func newMemoryID() string {

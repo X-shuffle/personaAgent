@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func (f *fakeStore) Search(_ context.Context, query model.MemorySearchQuery) ([]
 
 func TestServiceRetrieve_OK(t *testing.T) {
 	store := &fakeStore{matches: []model.MemoryMatch{{Memory: model.Memory{ID: "m1"}, Score: 0.9}}}
-	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0.2, 0)
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0.2, 0, 3)
 
 	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
 	if err != nil {
@@ -75,7 +76,7 @@ func TestServiceRetrieve_SimilarityThreshold(t *testing.T) {
 		{Memory: model.Memory{ID: "low"}, Score: 0.19},
 		{Memory: model.Memory{ID: "high"}, Score: 0.81},
 	}}
-	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2)
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 3)
 
 	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
 	if err != nil {
@@ -86,9 +87,49 @@ func TestServiceRetrieve_SimilarityThreshold(t *testing.T) {
 	}
 }
 
+func TestServiceRetrieve_FallbackRecentWhenFilteredEmpty(t *testing.T) {
+	store := &fakeStore{
+		matches: []model.MemoryMatch{{Memory: model.Memory{ID: "low"}, Score: 0.1}},
+	}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 2)
+	_ = svc.StoreTurn(context.Background(), "s1", "u1", "a1", model.EmotionState{})
+	_ = svc.StoreTurn(context.Background(), "s1", "u2", "a2", model.EmotionState{})
+
+	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(memories) != 2 {
+		t.Fatalf("unexpected fallback memories: %+v", memories)
+	}
+	if !strings.Contains(memories[0].Content, "u2") || !strings.Contains(memories[1].Content, "u1") {
+		t.Fatalf("unexpected fallback order/content: %+v", memories)
+	}
+}
+
+func TestServiceRetrieve_FallbackUsesShortTermSize(t *testing.T) {
+	store := &fakeStore{
+		matches: []model.MemoryMatch{{Memory: model.Memory{ID: "low"}, Score: 0.1}},
+	}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 1)
+	_ = svc.StoreTurn(context.Background(), "s1", "u1", "a1", model.EmotionState{})
+	_ = svc.StoreTurn(context.Background(), "s1", "u2", "a2", model.EmotionState{})
+
+	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(memories) != 1 {
+		t.Fatalf("expected 1 fallback memory, got %+v", memories)
+	}
+	if !strings.Contains(memories[0].Content, "u2") {
+		t.Fatalf("expected latest memory in fallback, got %+v", memories)
+	}
+}
+
 func TestServiceStoreTurn_OK(t *testing.T) {
 	store := &fakeStore{}
-	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0)
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0, 3)
 	svc.now = func() time.Time { return time.Unix(1000, 0) }
 
 	err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{Label: "anxious", Intensity: 0.6})
@@ -111,7 +152,7 @@ func TestServiceStoreTurn_OK(t *testing.T) {
 }
 
 func TestServiceStoreTurn_EmbedError(t *testing.T) {
-	svc := NewService(&fakeStore{}, fakeEmbedder{err: errors.New("boom")}, zap.NewNop(), 3, 0, 0)
+	svc := NewService(&fakeStore{}, fakeEmbedder{err: errors.New("boom")}, zap.NewNop(), 3, 0, 0, 3)
 	if err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{}); err == nil {
 		t.Fatalf("expected error")
 	}
