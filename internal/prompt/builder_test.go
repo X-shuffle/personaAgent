@@ -29,8 +29,11 @@ func TestDefaultBuilder_Build(t *testing.T) {
 	if got := msgs[0].Content; got == "" {
 		t.Fatal("expected system prompt content")
 	}
-	if !strings.Contains(msgs[0].Content, "Emotion: neutral (intensity=0.00)") {
-		t.Fatalf("expected neutral emotion with intensity, got: %s", msgs[0].Content)
+	if !strings.Contains(msgs[0].Content, "Optional phrase cues:") {
+		t.Fatalf("expected optional phrase guidance in system prompt, got: %s", msgs[0].Content)
+	}
+	if !strings.Contains(msgs[0].Content, "Use at most one phrase naturally when it fits") {
+		t.Fatalf("expected sparse phrase usage guard, got: %s", msgs[0].Content)
 	}
 	if !strings.Contains(msgs[0].Content, "Current time:") {
 		t.Fatalf("expected current time anchor in system prompt, got: %s", msgs[0].Content)
@@ -61,7 +64,7 @@ func TestDefaultBuilder_Build_WithMemory(t *testing.T) {
 	if strings.Contains(msgs[0].Content, "[emotion: happy]") {
 		t.Fatalf("did not expect memory emotion metadata in system prompt")
 	}
-	if strings.Contains(msgs[0].Content, "Response guidance:") {
-		t.Fatalf("did not expect verbose guidance in system prompt")
+	if strings.Contains(msgs[0].Content, "Optional phrase cues:") {
+		t.Fatalf("did not expect optional phrase guidance when phrases are empty")
 	}
 }

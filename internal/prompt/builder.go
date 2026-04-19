@@ -24,12 +24,14 @@ func (b DefaultBuilder) Build(persona model.Persona, memories []model.Memory, em
 		loc = time.UTC
 	}
 	personaCtx := fmt.Sprintf(
-		"You are a persona-driven assistant.\nTone: %s\nStyle: %s\nValues: %s\nPreferred phrases: %s",
+		"You are a persona-driven assistant.\nTone: %s\nStyle: %s\nValues: %s",
 		persona.Tone,
 		persona.Style,
 		strings.Join(persona.Values, ", "),
-		strings.Join(persona.Phrases, ", "),
 	)
+	if len(persona.Phrases) > 0 {
+		personaCtx += fmt.Sprintf("\nOptional phrase cues: %s\nUse at most one phrase naturally when it fits. Avoid repetition across turns.", strings.Join(persona.Phrases, ", "))
+	}
 
 	personaCtx += fmt.Sprintf("\n\nEmotion: %s (intensity=%.2f)",
 		emotion.NormalizeLabel(emotionState.Label),

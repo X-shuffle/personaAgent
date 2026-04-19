@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"sync"
@@ -115,7 +116,12 @@ func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (stri
 		}
 	}
 
-	messages := o.PromptBuilder.Build(p, memories, detectedEmotion, message)
+	promptPersona := p
+	if !shouldIncludePersonaPhrases(sessionID, message) {
+		promptPersona.Phrases = nil
+	}
+
+	messages := o.PromptBuilder.Build(promptPersona, memories, detectedEmotion, message)
 	responseText, err := o.generateChatResponse(ctx, messages)
 	if err != nil {
 		return "", err
@@ -241,6 +247,14 @@ func buildLLMTools(catalog map[string][]mcptypes.Tool) []model.LLMTool {
 		}
 	}
 	return tools
+}
+
+func shouldIncludePersonaPhrases(sessionID, message string) bool {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sessionID))
+	_, _ = h.Write([]byte("\n"))
+	_, _ = h.Write([]byte(message))
+	return h.Sum32()%4 == 0
 }
 
 func extractToolParameters(tool mcptypes.Tool) map[string]any {

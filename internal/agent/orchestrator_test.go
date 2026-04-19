@@ -27,11 +27,13 @@ func (f fakePersonaProvider) GetPersona(_ context.Context, _ string) (model.Pers
 }
 
 type fakePromptBuilder struct {
+	lastPersona  model.Persona
 	lastMemories []model.Memory
 	lastEmotion  model.EmotionState
 }
 
-func (f *fakePromptBuilder) Build(_ model.Persona, memories []model.Memory, emotion model.EmotionState, userInput string) []model.LLMMessage {
+func (f *fakePromptBuilder) Build(persona model.Persona, memories []model.Memory, emotion model.EmotionState, userInput string) []model.LLMMessage {
+	f.lastPersona = persona
 	f.lastMemories = append([]model.Memory(nil), memories...)
 	f.lastEmotion = emotion
 	return []model.LLMMessage{{Role: "user", Content: userInput}}
@@ -404,6 +406,46 @@ func TestOrchestratorChat_DetectFailureDegradesGracefully(t *testing.T) {
 	}
 	if memorySvc.lastEmotion.Label != "neutral" {
 		t.Fatalf("expected stored neutral fallback, got %+v", memorySvc.lastEmotion)
+	}
+}
+
+func TestOrchestratorChat_PersonaPhrasesSparseGating(t *testing.T) {
+	builder := &fakePromptBuilder{}
+	sessionID := "s1"
+	message := "hi"
+	basePersona := model.Persona{Tone: "warm", Phrases: []string{"慢慢来", "别着急"}}
+
+	o := newTestOrchestrator(Orchestrator{
+		PersonaProvider: fakePersonaProvider{persona: basePersona},
+		PromptBuilder:   builder,
+		LLMClient:       &fakeLLMClient{responses: []model.LLMResponse{{Text: "ok"}}},
+	})
+
+	_, err := o.Chat(context.Background(), sessionID, message)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	expectInclude := shouldIncludePersonaPhrases(sessionID, message)
+	if expectInclude {
+		if len(builder.lastPersona.Phrases) != len(basePersona.Phrases) {
+			t.Fatalf("expected phrases included, got %v", builder.lastPersona.Phrases)
+		}
+		return
+	}
+	if len(builder.lastPersona.Phrases) != 0 {
+		t.Fatalf("expected phrases removed by sparse gating, got %v", builder.lastPersona.Phrases)
+	}
+}
+
+func TestShouldIncludePersonaPhrases_Deterministic(t *testing.T) {
+	sessionID := "same-session"
+	message := "same-message"
+	first := shouldIncludePersonaPhrases(sessionID, message)
+	for i := 0; i < 10; i++ {
+		if shouldIncludePersonaPhrases(sessionID, message) != first {
+			t.Fatal("expected deterministic sparse gating decision")
+		}
 	}
 }
 
