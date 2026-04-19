@@ -69,6 +69,26 @@ func TestServiceIngest_TXT_OK(t *testing.T) {
 	if len(store.upserted) != 2 {
 		t.Fatalf("expected upserted=2, got %d", len(store.upserted))
 	}
+	if store.upserted[0].Importance <= 0 || store.upserted[0].Importance > 1 {
+		t.Fatalf("expected clamped importance, got %f", store.upserted[0].Importance)
+	}
+}
+
+func TestServiceIngest_ImportanceVariesByContent(t *testing.T) {
+	store := &fakeStore{}
+	svc := NewService(fakeEmbedder{}, store, Config{Enabled: true, SegmentMaxChars: 500, MergeWindowSeconds: 90, EmbedBatchSize: 4, AllowedExtensions: []string{"txt", "json"}})
+
+	input := "2026-04-11 10:00:00 Alice: 你好\n2026-04-11 10:00:20 Bob: 我计划下周完成迁移，记得提醒我"
+	_, err := svc.Ingest(context.Background(), Request{SessionID: "s1", Filename: "chat.txt", Data: []byte(input)})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(store.upserted) != 2 {
+		t.Fatalf("expected upserted=2, got %d", len(store.upserted))
+	}
+	if store.upserted[1].Importance <= store.upserted[0].Importance {
+		t.Fatalf("expected second segment importance higher, got first=%f second=%f", store.upserted[0].Importance, store.upserted[1].Importance)
+	}
 }
 
 func TestServiceIngest_JSON_DryRun(t *testing.T) {

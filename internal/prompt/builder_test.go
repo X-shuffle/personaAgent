@@ -29,8 +29,8 @@ func TestDefaultBuilder_Build(t *testing.T) {
 	if got := msgs[0].Content; got == "" {
 		t.Fatal("expected system prompt content")
 	}
-	if !strings.Contains(msgs[0].Content, "Optional phrase cues:") {
-		t.Fatalf("expected optional phrase guidance in system prompt, got: %s", msgs[0].Content)
+	if !strings.Contains(msgs[0].Content, "Persona consistency rules:") {
+		t.Fatalf("expected persona consistency rules in system prompt, got: %s", msgs[0].Content)
 	}
 	if !strings.Contains(msgs[0].Content, "Use at most one phrase naturally when it fits") {
 		t.Fatalf("expected sparse phrase usage guard, got: %s", msgs[0].Content)
@@ -43,28 +43,19 @@ func TestDefaultBuilder_Build(t *testing.T) {
 	}
 }
 
-func TestDefaultBuilder_Build_WithMemory(t *testing.T) {
+func TestDefaultBuilder_Build_WithSummaryMemory(t *testing.T) {
 	b := DefaultBuilder{}
 	persona := model.Persona{Tone: "warm", Style: "concise"}
 	memories := []model.Memory{
-		{Content: "User likes morning runs.", Emotion: "happy", Timestamp: 1712800000},
-		{Content: "User prefers concise replies."},
+		{Type: model.MemoryTypeSummary, Content: "Summary of recent session context: ...", Timestamp: 1712801000},
+		{Type: model.MemoryTypeEpisodic, Content: "User prefers concise replies.", Timestamp: 1712801100},
 	}
 
-	msgs := b.Build(persona, memories, model.EmotionState{Label: "sad", Intensity: 0.7}, "你记得我吗")
-	if !strings.Contains(msgs[0].Content, "Memories") {
-		t.Fatalf("expected memory section, got: %s", msgs[0].Content)
+	msgs := b.Build(persona, memories, model.EmotionState{Label: "neutral", Intensity: 0.2}, "继续")
+	if !strings.Contains(msgs[0].Content, "Memory summaries:") {
+		t.Fatalf("expected summary section, got: %s", msgs[0].Content)
 	}
-	if !strings.Contains(msgs[0].Content, "User likes morning runs.") {
-		t.Fatalf("expected first memory content in system prompt")
-	}
-	if !strings.Contains(msgs[0].Content, "2024-04-11 09:46:40 +08:00") {
-		t.Fatalf("expected memory timestamp in system prompt, got: %s", msgs[0].Content)
-	}
-	if strings.Contains(msgs[0].Content, "[emotion: happy]") {
-		t.Fatalf("did not expect memory emotion metadata in system prompt")
-	}
-	if strings.Contains(msgs[0].Content, "Optional phrase cues:") {
-		t.Fatalf("did not expect optional phrase guidance when phrases are empty")
+	if !strings.Contains(msgs[0].Content, "Episodic memories:") {
+		t.Fatalf("expected episodic section, got: %s", msgs[0].Content)
 	}
 }

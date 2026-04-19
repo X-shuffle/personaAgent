@@ -117,7 +117,7 @@ func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (stri
 	}
 
 	promptPersona := p
-	if !shouldIncludePersonaPhrases(sessionID, message) {
+	if !shouldIncludePersonaPhrases(sessionID, message, detectedEmotion) {
 		promptPersona.Phrases = nil
 	}
 
@@ -249,12 +249,31 @@ func buildLLMTools(catalog map[string][]mcptypes.Tool) []model.LLMTool {
 	return tools
 }
 
-func shouldIncludePersonaPhrases(sessionID, message string) bool {
+// shouldIncludePersonaPhrases 基于输入哈希与情绪强度决定本轮是否注入口头禅。
+func shouldIncludePersonaPhrases(sessionID, message string, emotion model.EmotionState) bool {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(sessionID))
 	_, _ = h.Write([]byte("\n"))
 	_, _ = h.Write([]byte(message))
-	return h.Sum32()%4 == 0
+	base := h.Sum32() % 4
+
+	label := strings.ToLower(strings.TrimSpace(emotion.Label))
+	intensity := emotion.Intensity
+	if intensity < 0 {
+		intensity = 0
+	}
+	if intensity > 1 {
+		intensity = 1
+	}
+
+	switch label {
+	case "sad", "anxious", "angry", "fear", "fearful", "stressed":
+		return base <= 1 || intensity >= 0.7
+	case "happy", "excited":
+		return base == 0
+	default:
+		return base == 0
+	}
 }
 
 func extractToolParameters(tool mcptypes.Tool) map[string]any {

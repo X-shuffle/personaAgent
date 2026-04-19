@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"hash/fnv"
 	"sync"
 	"testing"
 	"time"
@@ -426,7 +427,7 @@ func TestOrchestratorChat_PersonaPhrasesSparseGating(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 
-	expectInclude := shouldIncludePersonaPhrases(sessionID, message)
+	expectInclude := shouldIncludePersonaPhrases(sessionID, message, model.EmotionState{Label: "neutral", Intensity: 0})
 	if expectInclude {
 		if len(builder.lastPersona.Phrases) != len(basePersona.Phrases) {
 			t.Fatalf("expected phrases included, got %v", builder.lastPersona.Phrases)
@@ -441,11 +442,30 @@ func TestOrchestratorChat_PersonaPhrasesSparseGating(t *testing.T) {
 func TestShouldIncludePersonaPhrases_Deterministic(t *testing.T) {
 	sessionID := "same-session"
 	message := "same-message"
-	first := shouldIncludePersonaPhrases(sessionID, message)
+	first := shouldIncludePersonaPhrases(sessionID, message, model.EmotionState{Label: "neutral", Intensity: 0})
 	for i := 0; i < 10; i++ {
-		if shouldIncludePersonaPhrases(sessionID, message) != first {
+		if shouldIncludePersonaPhrases(sessionID, message, model.EmotionState{Label: "neutral", Intensity: 0}) != first {
 			t.Fatal("expected deterministic sparse gating decision")
 		}
+	}
+}
+
+func TestShouldIncludePersonaPhrases_EmotionAware(t *testing.T) {
+	sessionID := "session-emotion"
+	message := "msg"
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sessionID))
+	_, _ = h.Write([]byte("\n"))
+	_, _ = h.Write([]byte(message))
+	base := h.Sum32() % 4
+
+	neutral := shouldIncludePersonaPhrases(sessionID, message, model.EmotionState{Label: "neutral", Intensity: 0.1})
+	highAnxious := shouldIncludePersonaPhrases(sessionID, message, model.EmotionState{Label: "anxious", Intensity: 0.9})
+	if base > 1 && !highAnxious {
+		t.Fatalf("expected high anxious to force include when base=%d", base)
+	}
+	if base > 1 && neutral {
+		t.Fatalf("expected neutral to stay excluded when base=%d", base)
 	}
 }
 

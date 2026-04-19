@@ -149,6 +149,106 @@ func TestServiceStoreTurn_OK(t *testing.T) {
 	if m.Emotion != "anxious" {
 		t.Fatalf("expected emotion anxious, got %q", m.Emotion)
 	}
+	if m.Importance <= 0 || m.Importance > 1 {
+		t.Fatalf("expected importance in (0,1], got %f", m.Importance)
+	}
+}
+
+func TestServiceStoreTurn_ImportanceVariesBySignal(t *testing.T) {
+	store := &fakeStore{}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0, 8)
+
+	if err := svc.StoreTurn(context.Background(), "s1", "你好", "好的", model.EmotionState{Label: "neutral", Intensity: 0.1}); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if err := svc.StoreTurn(context.Background(), "s1", "我计划下周完成迁移，记得提醒我", "收到", model.EmotionState{Label: "anxious", Intensity: 0.9}); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(store.upserted) < 2 {
+		t.Fatalf("expected at least 2 upserted memories")
+	}
+	low := store.upserted[0].Importance
+	high := store.upserted[1].Importance
+	if high <= low {
+		t.Fatalf("expected high-signal turn importance > low-signal turn, low=%f high=%f", low, high)
+	}
+}
+
+func TestServiceStoreTurn_GeneratesSummaryEveryTriggerTurns(t *testing.T) {
+	store := &fakeStore{}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0, 8)
+	base := time.Unix(1000, 0)
+	idx := int64(0)
+	svc.now = func() time.Time {
+		idx++
+		return base.Add(time.Duration(idx) * time.Second)
+	}
+
+	for i := 0; i < summaryTriggerTurns; i++ {
+		if err := svc.StoreTurn(context.Background(), "s1", "我计划明天完成任务", "收到", model.EmotionState{Label: "anxious", Intensity: 0.7}); err != nil {
+			t.Fatalf("unexpected err at turn %d: %v", i, err)
+		}
+	}
+
+	summaryCount := 0
+	for _, m := range store.upserted {
+		if m.Type == model.MemoryTypeSummary {
+			summaryCount++
+			if !strings.Contains(m.Content, "Summary of recent session context") {
+				t.Fatalf("unexpected summary content: %s", m.Content)
+			}
+		}
+	}
+	if summaryCount != 1 {
+		t.Fatalf("expected 1 summary memory, got %d", summaryCount)
+	}
+}
+
+func TestServiceStoreTurn_SummaryFailureDoesNotFailMainFlow(t *testing.T) {
+	store := &fakeStore{}
+	svc := NewService(store, fakeEmbedder{err: errors.New("boom")}, zap.NewNop(), 3, 0, 0, 8)
+	if err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{}); err == nil {
+		t.Fatalf("expected error when episodic embedding fails")
+	}
+
+	embed := fakeEmbedder{}
+	store = &fakeStore{}
+	svc = NewService(store, embed, zap.NewNop(), 3, 0, 0, 8)
+	svc.now = func() time.Time { return time.Unix(1000, 0) }
+	for i := 0; i < summaryTriggerTurns-1; i++ {
+		if err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{}); err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+	}
+
+	store.upsertErr = errors.New("upsert boom")
+	err := svc.StoreTurn(context.Background(), "s1", "u", "a", model.EmotionState{})
+	if err == nil {
+		t.Fatalf("expected store upsert error")
+	}
+}
+
+func TestServiceRetrieve_CapsSummaryMemories(t *testing.T) {
+	store := &fakeStore{matches: []model.MemoryMatch{
+		{Memory: model.Memory{ID: "s1", Type: model.MemoryTypeSummary}, Score: 0.99},
+		{Memory: model.Memory{ID: "s2", Type: model.MemoryTypeSummary}, Score: 0.98},
+		{Memory: model.Memory{ID: "e1", Type: model.MemoryTypeEpisodic}, Score: 0.97},
+	}}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0, 8)
+
+	memories, err := svc.Retrieve(context.Background(), "sess", "hello")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	summaryCount := 0
+	for _, m := range memories {
+		if m.Type == model.MemoryTypeSummary {
+			summaryCount++
+		}
+	}
+	if summaryCount > 1 {
+		t.Fatalf("expected at most one summary memory, got %d", summaryCount)
+	}
 }
 
 func TestServiceStoreTurn_EmbedError(t *testing.T) {

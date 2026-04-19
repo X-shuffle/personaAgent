@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,15 @@ import (
 	"go.uber.org/zap"
 
 	"persona_agent/internal/model"
+)
+
+const (
+	// summaryTriggerTurns 表示每累计多少轮对话触发一次摘要写入。
+	summaryTriggerTurns = 6
+	// summaryWindow 表示生成摘要时回看的最近记忆条数。
+	summaryWindow = 8
+	// summaryMaxChars 限制摘要文本最大长度，避免摘要本身过长。
+	summaryMaxChars = 300
 )
 
 // DefaultService implements memory retrieval and turn storage.
@@ -26,7 +36,10 @@ type DefaultService struct {
 	now           func() time.Time
 
 	cacheMu         sync.RWMutex
+	// shortTermBySess 保存每个 session 的短期记忆（按时间倒序），用于检索兜底与摘要构建。
 	shortTermBySess map[string][]model.Memory
+	// turnCountBySess 记录每个 session 的累计轮次，用于控制摘要触发节奏。
+	turnCountBySess map[string]int
 }
 
 func NewService(store Store, embedder Embedder, logger *zap.Logger, topK int, minImportance, minSimilarity float64, shortTermSize int) *DefaultService {
@@ -56,6 +69,7 @@ func NewService(store Store, embedder Embedder, logger *zap.Logger, topK int, mi
 		shortTermSize:   shortTermSize,
 		now:             time.Now,
 		shortTermBySess: make(map[string][]model.Memory),
+		turnCountBySess: make(map[string]int),
 	}
 }
 
@@ -105,7 +119,7 @@ func (s *DefaultService) Retrieve(ctx context.Context, sessionID, userInput stri
 		out = append(out, m.Memory)
 	}
 	if len(out) > 0 {
-		return out, nil
+		return capSummaryMemories(out, 1), nil
 	}
 
 	recent := s.loadShortTerm(sessionID, s.topK)
@@ -143,13 +157,67 @@ func (s *DefaultService) StoreTurn(ctx context.Context, sessionID, userInput, as
 		Embedding:  vectors[0],
 		Emotion:    strings.TrimSpace(emotion.Label),
 		Timestamp:  s.now().Unix(),
-		Importance: 0.5,
+		Importance: scoreTurnImportance(userInput, assistantOutput, emotion),
 	}
 	s.pushShortTerm(memory)
 	if err := s.store.Upsert(ctx, []model.Memory{memory}); err != nil {
 		return fmt.Errorf("upsert memory: %w", err)
 	}
+	if err := s.tryStoreSummary(ctx, sessionID); err != nil {
+		s.logger.Warn("summary memory store failed", zap.String("session_id", sessionID), zap.Error(err))
+	}
 	return nil
+}
+
+// tryStoreSummary 在满足触发条件时生成并写入 summary 记忆；失败不影响主流程。
+func (s *DefaultService) tryStoreSummary(ctx context.Context, sessionID string) error {
+	if !s.shouldSummarize(sessionID) {
+		return nil
+	}
+
+	recent := s.loadShortTerm(sessionID, summaryWindow)
+	if len(recent) < summaryTriggerTurns {
+		return nil
+	}
+	summaryContent, summaryTimestamp := buildSummaryContent(recent)
+	if summaryContent == "" || summaryTimestamp <= 0 {
+		return nil
+	}
+
+	vectors, err := s.embedder.Embed(ctx, []string{summaryContent})
+	if err != nil {
+		return fmt.Errorf("embed summary memory: %w", err)
+	}
+	if len(vectors) == 0 {
+		return nil
+	}
+	summary := model.Memory{
+		ID:         newMemoryID(),
+		SessionID:  sessionID,
+		Type:       model.MemoryTypeSummary,
+		Content:    summaryContent,
+		Embedding:  vectors[0],
+		Emotion:    "",
+		Timestamp:  summaryTimestamp,
+		Importance: scoreSummaryImportance(recent),
+	}
+	if err := s.store.Upsert(ctx, []model.Memory{summary}); err != nil {
+		return fmt.Errorf("upsert summary memory: %w", err)
+	}
+	return nil
+}
+
+// shouldSummarize 按 session 轮次节奏判断当前是否应触发摘要。
+func (s *DefaultService) shouldSummarize(sessionID string) bool {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	s.turnCountBySess[sessionID]++
+	turns := s.turnCountBySess[sessionID]
+	if turns < summaryTriggerTurns || turns%summaryTriggerTurns != 0 {
+		return false
+	}
+	return true
 }
 
 func (s *DefaultService) pushShortTerm(memory model.Memory) {
@@ -180,6 +248,138 @@ func (s *DefaultService) loadShortTerm(sessionID string, limit int) []model.Memo
 	out := append([]model.Memory(nil), items...)
 	s.cacheMu.RUnlock()
 	return out
+}
+
+// scoreTurnImportance 为单轮对话计算重要性分数（0~1），用于后续检索过滤。
+func scoreTurnImportance(userInput, assistantOutput string, emotion model.EmotionState) float64 {
+	score := 0.5
+	text := strings.ToLower(strings.TrimSpace(userInput + "\n" + assistantOutput))
+	if text == "" {
+		return 0
+	}
+
+	if hasAny(text, "我喜欢", "我不喜欢", "偏好", "希望", "习惯", "常常") {
+		score += 0.18
+	}
+	if hasAny(text, "计划", "准备", "打算", "目标", "明天", "下周", "deadline", "截至") {
+		score += 0.12
+	}
+	if hasAny(text, "一定", "必须", "承诺", "记得", "提醒我", "不要忘") {
+		score += 0.1
+	}
+	if hasAny(text, "今天", "明天", "昨天", "年", "月", "日", "点", "号") {
+		score += 0.06
+	}
+	if hasAny(text, "你好", "谢谢", "好的", "嗯", "哈哈", "ok", "收到") {
+		score -= 0.08
+	}
+	if len(strings.Fields(text)) <= 6 {
+		score -= 0.06
+	}
+
+	if emotion.Intensity > 0 {
+		score += clamp01(emotion.Intensity) * 0.12
+	}
+	if strings.EqualFold(strings.TrimSpace(emotion.Label), "neutral") {
+		score -= 0.03
+	}
+	return clamp01(score)
+}
+
+func scoreSummaryImportance(recent []model.Memory) float64 {
+	if len(recent) == 0 {
+		return 0.75
+	}
+	total := 0.0
+	for _, m := range recent {
+		total += clamp01(m.Importance)
+	}
+	avg := total / float64(len(recent))
+	if avg < 0.62 {
+		avg = 0.62
+	}
+	return clamp01(avg + 0.12)
+}
+
+// capSummaryMemories 限制检索结果中的 summary 数量，防止摘要挤占 episodic 记忆。
+func capSummaryMemories(memories []model.Memory, maxSummary int) []model.Memory {
+	if len(memories) <= 1 || maxSummary <= 0 {
+		return memories
+	}
+	out := make([]model.Memory, 0, len(memories))
+	summaryCount := 0
+	for _, m := range memories {
+		if m.Type == model.MemoryTypeSummary {
+			summaryCount++
+			if summaryCount > maxSummary {
+				continue
+			}
+		}
+		out = append(out, m)
+	}
+	if len(out) == 0 {
+		return memories[:1]
+	}
+	return out
+}
+
+// buildSummaryContent 将近期记忆按时间排序并压缩为摘要文本，返回摘要内容与最新时间戳。
+func buildSummaryContent(recent []model.Memory) (string, int64) {
+	if len(recent) == 0 {
+		return "", 0
+	}
+	ordered := append([]model.Memory(nil), recent...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Timestamp == ordered[j].Timestamp {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].Timestamp < ordered[j].Timestamp
+	})
+
+	parts := make([]string, 0, len(ordered))
+	latest := int64(0)
+	for _, m := range ordered {
+		line := strings.TrimSpace(m.Content)
+		if line == "" {
+			continue
+		}
+		if len(line) > 96 {
+			line = line[:96]
+		}
+		parts = append(parts, line)
+		if m.Timestamp > latest {
+			latest = m.Timestamp
+		}
+	}
+	if len(parts) == 0 {
+		return "", 0
+	}
+	summary := "Summary of recent session context:\n- " + strings.Join(parts, "\n- ")
+	if len(summary) > summaryMaxChars {
+		summary = summary[:summaryMaxChars]
+		summary = strings.TrimRight(summary, " \n-:")
+	}
+	return summary, latest
+}
+
+func hasAny(text string, keywords ...string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// clamp01 将分数约束到 [0,1]，避免越界。
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 func newMemoryID() string {

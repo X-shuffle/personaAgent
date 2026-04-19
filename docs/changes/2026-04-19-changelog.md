@@ -85,3 +85,52 @@
 
 - 门控输入是 `sessionID + message`，同一输入结果稳定，但不同输入命中率是统计意义上的 25%，单用户短期内可能有波动。
 - 当前未增加运行时命中率指标；若后续需要观测实际效果，可补充 debug 级别采样日志。
+
+## Entry: Phase 5 高级能力落地（记忆摘要 + 重要性评分 + 人设一致性）
+
+### Summary (Phase 5)
+
+- 在 `internal/memory/service.go` 引入回合重要性评分、周期性摘要写入、摘要检索限流，形成「episodic + summary」双轨记忆。
+- 在 `internal/ingestion/service.go` 引入摄入文本重要性评分，摄入数据不再固定 `0.4`。
+- 在 `internal/prompt/builder.go` 增加人设一致性规则，并将记忆渲染拆分为 `Memory summaries` 与 `Episodic memories`。
+- 在 `internal/agent/orchestrator.go` 将短语门控升级为“哈希 + 情绪”联合策略，高强度负向情绪更容易注入口头禅。
+- 为上述能力补齐测试：`internal/memory/service_test.go`、`internal/ingestion/service_test.go`、`internal/prompt/builder_test.go`、`internal/agent/orchestrator_test.go`。
+
+### Why (Phase 5)
+
+- 解决固定重要性常量导致的“高价值记忆与寒暄噪声同权重”问题。
+- 解决长会话中上下文漂移问题：通过摘要记忆压缩阶段信息，降低纯 episodic 检索遗漏。
+- 让 persona 短语注入更符合情绪语境，减少生硬重复。
+
+### Changed Files (Phase 5)
+
+- `internal/memory/service.go`
+  - 新增：`scoreTurnImportance`、`tryStoreSummary`、`buildSummaryContent`、`scoreSummaryImportance`、`capSummaryMemories`。
+  - 更新：`StoreTurn` 使用动态 `Importance`；`Retrieve` 对 summary 数量做上限控制。
+- `internal/ingestion/service.go`
+  - 新增：`scoreIngestImportance`、`containsAny`、`clamp01`。
+  - 更新：`Ingest` 写入记忆时改为动态 `Importance`。
+- `internal/prompt/builder.go`
+  - 更新 `Build`：增加人设一致性规则段；按 summary/episodic 分区渲染记忆。
+- `internal/agent/orchestrator.go`
+  - 更新 `shouldIncludePersonaPhrases`：引入 `emotion` 入参与强度阈值逻辑。
+- `internal/memory/service_test.go`
+  - 新增重要性差异、摘要触发、摘要限流等测试。
+- `internal/ingestion/service_test.go`
+  - 新增摄入重要性差异测试。
+- `internal/prompt/builder_test.go`
+  - 新增一致性规则与 summary/episodic 分区渲染测试。
+- `internal/agent/orchestrator_test.go`
+  - 新增 emotion-aware phrase gating 测试。
+
+### Validation (Phase 5)
+
+- 执行：`go test ./internal/memory ./internal/ingestion ./internal/prompt ./internal/agent`
+- 执行：`go test ./...`
+- 结果：通过
+
+### Risk / Notes (Phase 5)
+
+- 摘要写入为 best-effort，摘要失败不会阻断主流程，但会降低长期会话压缩效果。
+- 重要性评分为启发式规则，不同语料域可能需要后续微调关键词权重。
+- 不加运行时开关，回退路径依赖代码回滚而非配置切换。

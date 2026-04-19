@@ -172,7 +172,7 @@ func (s *DefaultService) Ingest(ctx context.Context, req Request) (Result, error
 			Embedding:  vectors[i],
 			Emotion:    "",
 			Timestamp:  seg.Timestamp,
-			Importance: 0.4,
+			Importance: scoreIngestImportance(seg.Content),
 		})
 	}
 	if err := s.store.Upsert(ctx, memories); err != nil {
@@ -478,6 +478,56 @@ func segmentRecords(records []messageRecord, maxChars, mergeWindowSeconds int) [
 
 func formatSegmentLine(r messageRecord) string {
 	return strings.TrimSpace(r.Speaker) + ": " + strings.TrimSpace(r.Content)
+}
+
+// scoreIngestImportance 为摄入文本计算重要性分数（0~1），用于检索阶段的重要性过滤。
+func scoreIngestImportance(content string) float64 {
+	text := strings.ToLower(strings.TrimSpace(content))
+	if text == "" {
+		return 0
+	}
+
+	score := 0.4
+	if containsAny(text, "我喜欢", "我不喜欢", "偏好", "习惯", "希望") {
+		score += 0.18
+	}
+	if containsAny(text, "计划", "准备", "打算", "目标", "明天", "下周", "deadline", "截至") {
+		score += 0.14
+	}
+	if containsAny(text, "记得", "提醒", "一定", "必须", "承诺") {
+		score += 0.1
+	}
+	if containsAny(text, "今天", "明天", "昨天", "年", "月", "日", "点", "号") {
+		score += 0.07
+	}
+	if len(strings.Fields(text)) <= 5 {
+		score -= 0.08
+	}
+	if containsAny(text, "你好", "谢谢", "好的", "嗯", "哈哈", "ok", "收到") {
+		score -= 0.06
+	}
+	return clamp01(score)
+}
+
+// containsAny 判断文本是否包含任一关键词。
+func containsAny(text string, keywords ...string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// clamp01 将分数约束到 [0,1] 区间，保证重要性字段合法。
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 func newMemoryID() string {
