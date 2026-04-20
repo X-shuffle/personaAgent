@@ -91,3 +91,56 @@
 
 - `RecentBySession` 依赖 Qdrant `points/scroll` 与 `order_by` 行为，已增加本地 `timestamp` 倒序排序兜底以降低后端差异风险。
 - 强约束接口会要求后续新增 Store 实现必须提供 recent 能力，否则编译期即失败（这是预期约束）。
+
+## Entry: desktop phase-d 历史自动落盘与搜索接口打通
+
+### Summary（desktop phase-d）
+
+- `apps/desktop/app.go` 在 desktop 启动阶段接入 history store 初始化（打开 SQLite、执行 schema 迁移、预创建固定 session），在退出阶段关闭 store。
+- `apps/desktop/app.go` 将 `SendChat` 改为完整落盘链路：发送前持久化 user 消息，成功后持久化 assistant 消息，失败时持久化 assistant error（含 `error_code`）。
+- `apps/desktop/app.go` 新增 Wails 暴露方法 `SearchHistory(keyword, limit, offset)`，把 history 检索能力提供给前端调用。
+- `apps/desktop/backend/history/{schema.sql,store.go,search.go}` 与对应测试文件落地，覆盖 schema/CRUD/中文关键词检索（`LIKE + instr`）。
+- `apps/desktop/frontend/wailsjs/go/main/App.{d.ts,js}` 与 `apps/desktop/frontend/wailsjs/go/models.ts` 同步生成 `SearchHistory` 绑定。
+- `apps/desktop/go.mod` / `apps/desktop/go.sum` 新增 SQLite driver 依赖 `github.com/mattn/go-sqlite3`。
+
+### Why（desktop phase-d）
+
+- 之前 desktop 能调用 `/chat`，但没有把对话结果可靠写入本地历史，导致“可聊天但不可追溯/检索”。
+- 搜索能力虽在 history 包内实现，但未暴露到 Wails App 层，前端无法联调调用。
+- 需要先打通 D 阶段后端链路，再进入 E 阶段搜索 UI（面板、键盘导航、跳转定位）。
+
+### Changed Files
+
+- `apps/desktop/app.go`
+  - 新增 history store 生命周期管理、`SearchHistory` 方法、`SendChat` 自动落盘与失败落盘。
+  - 新增历史库路径解析：环境变量 `DESKTOP_HISTORY_DB_PATH` 优先，默认 `~/.persona-agent/desktop/history.sqlite`。
+- `apps/desktop/app_test.go`
+  - 新增 app 层端到端测试：成功落盘、失败落盘、搜索接口返回。
+- `apps/desktop/backend/history/schema.sql`
+  - 新建 `sessions/messages` 表与索引。
+- `apps/desktop/backend/history/store.go`
+  - 实现 SQLite 打开、迁移、会话/消息 CRUD、自动落盘 helper。
+- `apps/desktop/backend/history/search.go`
+  - 实现参数化 `LIKE + instr` 搜索。
+- `apps/desktop/backend/history/store_test.go`
+  - 覆盖迁移、CRUD、自动落盘、排序行为。
+- `apps/desktop/backend/history/search_test.go`
+  - 覆盖中文关键词命中、转义、分页。
+- `apps/desktop/frontend/wailsjs/go/main/App.d.ts`
+- `apps/desktop/frontend/wailsjs/go/main/App.js`
+- `apps/desktop/frontend/wailsjs/go/models.ts`
+  - 同步 Wails 绑定模型与方法定义。
+- `apps/desktop/go.mod`
+- `apps/desktop/go.sum`
+  - 更新 Go 依赖。
+
+### Validation
+
+- 执行：`go -C apps/desktop test ./...`
+  - 结果：通过。
+
+### Risk / Notes
+
+- 当前仍使用固定 `session_id`（`desktop-default-session`），后续如进入多会话能力需拆分。
+- 本次仅打通 D 阶段调用链，E 阶段 UI（历史搜索面板、↑/↓、Enter 跳转）尚未实现。
+- `github.com/mattn/go-sqlite3` 依赖 CGO，CI/打包环境需确保编译链可用。

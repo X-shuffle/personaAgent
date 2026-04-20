@@ -4,18 +4,24 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"desktop/backend/chat"
+	"desktop/backend/history"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.design/x/hotkey"
 )
 
 const (
-	focusInputEventName = "launcher:focus-input"
-	defaultChatBaseURL  = "http://localhost:8080"
-	fixedSessionID      = "desktop-default-session"
+	focusInputEventName  = "launcher:focus-input"
+	defaultChatBaseURL   = "http://localhost:8080"
+	defaultHistoryDBEnv  = "DESKTOP_HISTORY_DB_PATH"
+	fixedSessionID       = "desktop-default-session"
+	defaultHistorySubDir = ".persona-agent/desktop"
+	defaultHistoryDBName = "history.sqlite"
+	defaultSessionTitle  = ""
 )
 
 // App struct
@@ -29,13 +35,26 @@ type App struct {
 	stopHotkey  chan struct{}
 	doneHotkey  chan struct{}
 
-	chatClient *chat.Client
-	sessionID  string
+	chatClient   *chat.Client
+	historyStore *history.Store
+	historyDB    string
+	sessionID    string
 }
 
 type ChatResult struct {
 	Response string      `json:"response,omitempty"`
 	Error    *chat.Error `json:"error,omitempty"`
+}
+
+type HistorySearchItem struct {
+	MessageID    int64  `json:"message_id"`
+	SessionID    string `json:"session_id"`
+	SessionTitle string `json:"session_title"`
+	Role         string `json:"role"`
+	Content      string `json:"content"`
+	Status       string `json:"status"`
+	ErrorCode    string `json:"error_code"`
+	CreatedAt    int64  `json:"created_at"`
 }
 
 // NewApp creates a new App application struct
@@ -57,6 +76,20 @@ func (a *App) startup(ctx context.Context) {
 	a.chatClient = chat.NewClient(baseURL)
 	a.mu.Unlock()
 
+	store, path, err := openHistoryStore(ctx)
+	if err != nil {
+		runtime.LogWarningf(ctx, "history disabled: %v", err)
+	} else {
+		a.mu.Lock()
+		a.historyStore = store
+		a.historyDB = path
+		a.mu.Unlock()
+		if upsertErr := store.UpsertSession(ctx, fixedSessionID, defaultSessionTitle); upsertErr != nil {
+			runtime.LogWarningf(ctx, "initialize history session failed: %v", upsertErr)
+		}
+		runtime.LogInfof(ctx, "history store ready: %s", path)
+	}
+
 	runtime.WindowSetAlwaysOnTop(ctx, true)
 	_ = a.HideLauncher()
 	a.registerGlobalHotkeyWithFallback()
@@ -64,6 +97,18 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(context.Context) {
 	a.unregisterGlobalHotkey()
+
+	a.mu.Lock()
+	store := a.historyStore
+	a.historyStore = nil
+	a.historyDB = ""
+	a.mu.Unlock()
+
+	if store != nil {
+		if err := store.Close(); err != nil && a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "close history store failed: %v", err)
+		}
+	}
 }
 
 // ShowLauncher shows, restores and focuses the launcher window.
@@ -114,6 +159,7 @@ func (a *App) ToggleLauncher() error {
 func (a *App) SendChat(message string) ChatResult {
 	a.mu.Lock()
 	client := a.chatClient
+	store := a.historyStore
 	sessionID := a.sessionID
 	ctx := a.ctx
 	a.mu.Unlock()
@@ -121,12 +167,79 @@ func (a *App) SendChat(message string) ChatResult {
 	if client == nil {
 		return ChatResult{Error: &chat.Error{Code: "config_error", Message: "chat client is not initialized"}}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	resp, appErr := client.Send(ctx, chat.ChatRequest{SessionID: sessionID, Message: message})
+	trimmedMessage := strings.TrimSpace(message)
+	if trimmedMessage == "" {
+		return ChatResult{Error: &chat.Error{StatusCode: 422, Code: "invalid_argument", Message: "message is required"}}
+	}
+
+	if store != nil {
+		if err := store.UpsertSession(ctx, sessionID, defaultSessionTitle); err != nil {
+			a.logHistoryWarning("upsert session before send failed", err)
+		}
+		if _, err := store.PersistUserTurn(ctx, sessionID, trimmedMessage); err != nil {
+			a.logHistoryWarning("persist user turn failed", err)
+		}
+	}
+
+	resp, appErr := client.Send(ctx, chat.ChatRequest{SessionID: sessionID, Message: trimmedMessage})
 	if appErr != nil {
+		if store != nil {
+			errContent := strings.TrimSpace(appErr.Message)
+			if errContent == "" {
+				errContent = "chat request failed"
+			}
+			if _, err := store.PersistAssistantError(ctx, sessionID, normalizeHistoryErrorCode(appErr), errContent); err != nil {
+				a.logHistoryWarning("persist assistant error failed", err)
+			}
+		}
 		return ChatResult{Error: appErr}
 	}
+
+	if store != nil {
+		if _, err := store.PersistAssistantTurn(ctx, sessionID, resp.Response); err != nil {
+			a.logHistoryWarning("persist assistant turn failed", err)
+		}
+	}
 	return ChatResult{Response: resp.Response}
+}
+
+// SearchHistory exposes history full-text-like query for desktop frontend calls.
+func (a *App) SearchHistory(keyword string, limit int, offset int) ([]HistorySearchItem, error) {
+	a.mu.Lock()
+	store := a.historyStore
+	ctx := a.ctx
+	a.mu.Unlock()
+
+	if store == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	hits, err := store.SearchMessages(ctx, keyword, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]HistorySearchItem, 0, len(hits))
+	for _, hit := range hits {
+		items = append(items, HistorySearchItem{
+			MessageID:    hit.MessageID,
+			SessionID:    hit.SessionID,
+			SessionTitle: hit.SessionTitle,
+			Role:         hit.Role,
+			Content:      hit.Content,
+			Status:       hit.Status,
+			ErrorCode:    hit.ErrorCode,
+			CreatedAt:    hit.CreatedAt.Unix(),
+		})
+	}
+	return items, nil
 }
 
 func (a *App) showLocked() {
@@ -209,4 +322,66 @@ func (a *App) unregisterGlobalHotkey() {
 	if hk != nil {
 		_ = hk.Unregister()
 	}
+}
+
+func (a *App) logHistoryWarning(prefix string, err error) {
+	if err == nil {
+		return
+	}
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx != nil {
+		runtime.LogWarningf(ctx, "%s: %v", prefix, err)
+	}
+}
+
+func openHistoryStore(ctx context.Context) (*history.Store, string, error) {
+	path, err := resolveHistoryDBPath()
+	if err != nil {
+		return nil, "", err
+	}
+
+	store, err := history.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		_ = store.Close()
+		return nil, "", err
+	}
+
+	return store, path, nil
+}
+
+func resolveHistoryDBPath() (string, error) {
+	if fromEnv := strings.TrimSpace(os.Getenv(defaultHistoryDBEnv)); fromEnv != "" {
+		return fromEnv, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home: %w", err)
+	}
+
+	dir := filepath.Join(home, defaultHistorySubDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create history directory: %w", err)
+	}
+
+	return filepath.Join(dir, defaultHistoryDBName), nil
+}
+
+func normalizeHistoryErrorCode(appErr *chat.Error) string {
+	if appErr == nil {
+		return "internal_error"
+	}
+	if code := strings.TrimSpace(appErr.Code); code != "" {
+		return code
+	}
+	if appErr.StatusCode > 0 {
+		return fmt.Sprintf("http_%d", appErr.StatusCode)
+	}
+	return "internal_error"
 }

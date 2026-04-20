@@ -6,6 +6,10 @@ export function HideLauncher() {
   return window['go']['main']['App']['HideLauncher']();
 }
 
+export function SearchHistory(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchHistory'](arg1, arg2, arg3);
+}
+
 export function SendChat(arg1) {
   return window['go']['main']['App']['SendChat'](arg1);
 }

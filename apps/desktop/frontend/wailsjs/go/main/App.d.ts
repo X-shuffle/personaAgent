@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function HideLauncher():Promise<void>;
 
+export function SearchHistory(arg1:string,arg2:number,arg3:number):Promise<Array<main.HistorySearchItem>>;
+
 export function SendChat(arg1:string):Promise<main.ChatResult>;
 
 export function ShowLauncher():Promise<void>;

@@ -53,6 +53,32 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class HistorySearchItem {
+	    message_id: number;
+	    session_id: string;
+	    session_title: string;
+	    role: string;
+	    content: string;
+	    status: string;
+	    error_code: string;
+	    created_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HistorySearchItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.message_id = source["message_id"];
+	        this.session_id = source["session_id"];
+	        this.session_title = source["session_title"];
+	        this.role = source["role"];
+	        this.content = source["content"];
+	        this.status = source["status"];
+	        this.error_code = source["error_code"];
+	        this.created_at = source["created_at"];
+	    }
+	}
 
 }
 
