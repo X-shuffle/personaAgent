@@ -46,3 +46,48 @@
 
 - 固定 `session_id` 是当前阶段的短期策略，不区分用户与场景，后续如需多会话需引入可配置会话管理。
 - `keyCode` 在类型层面已标记为 deprecated，但该分支用于兼容部分输入法事件上报差异，当前保留以降低误触发概率。
+
+## Entry: memory 冷启动回补 Qdrant 最近记录并强化 Store 契约
+
+### Summary（memory）
+
+- `internal/memory/service.go` 在向量检索与 short-term 缓存都未命中时，新增从 `Store.RecentBySession` 拉取最近记忆的冷启动兜底。
+- `internal/memory/interfaces.go` 将 `RecentBySession` 纳入 `Store` 主接口，改为强约束能力。
+- `internal/memory/store_qdrant.go` 新增 `RecentBySession` 实现，通过 `points/scroll` + `session_id` 过滤拉取最近记录，并在本地按时间倒序再排序保证稳定性。
+- `internal/memory/service_test.go`、`internal/memory/store_qdrant_test.go`、`internal/ingestion/service_test.go` 补齐接口与行为测试。
+
+### Why（memory）
+
+- 仅依赖进程内 `shortTermBySess` 会在服务重启后丢失短期缓存，导致首次请求拿不到历史记忆。
+- 通过 Qdrant 回补最近记录，可以在冷启动时恢复会话连续性，减少“无记忆开场”。
+- 将 recent 能力并入 `Store` 主接口，避免可选接口分叉，明确所有存储实现都必须支持该能力。
+
+### Changed Files（memory）
+
+- `internal/memory/interfaces.go`
+  - 在 `Store` 中新增 `RecentBySession(ctx, sessionID, limit)` 并补充中文注释。
+- `internal/memory/service.go`
+  - `Retrieve` 新增冷启动兜底路径：short-term 空时调用 `s.store.RecentBySession`，异常按降级处理。
+- `internal/memory/store_qdrant.go`
+  - 新增 `RecentBySession`。
+  - 抽取 `memoryFromPayload` 复用 Search/Recent 的 payload 映射。
+  - 增加中文注释说明 scroll 查询与本地二次排序目的。
+- `internal/memory/service_test.go`
+  - fakeStore 增加 recent 能力桩。
+  - 新增冷启动命中 recent、short-term 优先、recent 失败降级等用例。
+- `internal/memory/store_qdrant_test.go`
+  - 新增 `RecentBySession` 请求体与结果顺序/映射校验。
+- `internal/ingestion/service_test.go`
+  - fakeStore 补齐 `RecentBySession`，满足强约束接口。
+
+### Validation（memory）
+
+- 执行：`go test ./internal/memory/...`
+  - 结果：通过。
+- 执行：`go test ./internal/memory/... ./internal/ingestion/...`
+  - 结果：通过。
+
+### Risk / Notes（memory）
+
+- `RecentBySession` 依赖 Qdrant `points/scroll` 与 `order_by` 行为，已增加本地 `timestamp` 倒序排序兜底以降低后端差异风险。
+- 强约束接口会要求后续新增 Store 实现必须提供 recent 能力，否则编译期即失败（这是预期约束）。

@@ -15,6 +15,8 @@ type Embedder interface {
 type Store interface {
 	Upsert(ctx context.Context, memories []model.Memory) error
 	Search(ctx context.Context, query model.MemorySearchQuery) ([]model.MemoryMatch, error)
+	// RecentBySession 拉取指定 session 的最近记忆（按时间倒序，limit 为上限）。
+	RecentBySession(ctx context.Context, sessionID string, limit int) ([]model.Memory, error)
 }
 
 // Service is the orchestration-facing memory API.

@@ -32,11 +32,16 @@ func (f fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float64, err
 }
 
 type fakeStore struct {
-	matches    []model.MemoryMatch
-	searchErr  error
-	upsertErr  error
-	upserted   []model.Memory
-	lastSearch model.MemorySearchQuery
+	matches           []model.MemoryMatch
+	recent            []model.Memory
+	searchErr         error
+	recentErr         error
+	upsertErr         error
+	upserted          []model.Memory
+	lastSearch        model.MemorySearchQuery
+	lastRecentSession string
+	lastRecentLimit   int
+	recentCalls       int
 }
 
 func (f *fakeStore) Upsert(_ context.Context, memories []model.Memory) error {
@@ -53,6 +58,16 @@ func (f *fakeStore) Search(_ context.Context, query model.MemorySearchQuery) ([]
 		return nil, f.searchErr
 	}
 	return f.matches, nil
+}
+
+func (f *fakeStore) RecentBySession(_ context.Context, sessionID string, limit int) ([]model.Memory, error) {
+	f.recentCalls++
+	f.lastRecentSession = sessionID
+	f.lastRecentLimit = limit
+	if f.recentErr != nil {
+		return nil, f.recentErr
+	}
+	return f.recent, nil
 }
 
 func TestServiceRetrieve_OK(t *testing.T) {
@@ -107,25 +122,77 @@ func TestServiceRetrieve_FallbackRecentWhenFilteredEmpty(t *testing.T) {
 	}
 }
 
-func TestServiceRetrieve_FallbackUsesShortTermSize(t *testing.T) {
+func TestServiceRetrieve_UsesRecentStoreWhenColdStart(t *testing.T) {
 	store := &fakeStore{
 		matches: []model.MemoryMatch{{Memory: model.Memory{ID: "low"}, Score: 0.1}},
+		recent: []model.Memory{
+			{ID: "r1", Type: model.MemoryTypeSummary, Timestamp: 100},
+			{ID: "r2", Type: model.MemoryTypeSummary, Timestamp: 90},
+			{ID: "r3", Type: model.MemoryTypeEpisodic, Timestamp: 80},
+		},
 	}
-	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 1)
-	_ = svc.StoreTurn(context.Background(), "s1", "u1", "a1", model.EmotionState{})
-	_ = svc.StoreTurn(context.Background(), "s1", "u2", "a2", model.EmotionState{})
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 2)
 
 	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(memories) != 1 {
-		t.Fatalf("expected 1 fallback memory, got %+v", memories)
+	if store.recentCalls != 1 || store.lastRecentSession != "s1" || store.lastRecentLimit != 3 {
+		t.Fatalf("unexpected recent call: calls=%d session=%q limit=%d", store.recentCalls, store.lastRecentSession, store.lastRecentLimit)
 	}
-	if !strings.Contains(memories[0].Content, "u2") {
-		t.Fatalf("expected latest memory in fallback, got %+v", memories)
+	if len(memories) != 2 {
+		t.Fatalf("expected summary capped recent memories, got %+v", memories)
+	}
+	summaryCount := 0
+	for _, m := range memories {
+		if m.Type == model.MemoryTypeSummary {
+			summaryCount++
+		}
+	}
+	if summaryCount > 1 {
+		t.Fatalf("expected at most one summary in recent fallback, got %d", summaryCount)
 	}
 }
+
+func TestServiceRetrieve_ShortTermPreferredOverRecentStore(t *testing.T) {
+	store := &fakeStore{
+		matches: []model.MemoryMatch{{Memory: model.Memory{ID: "low"}, Score: 0.1}},
+		recent:  []model.Memory{{ID: "r1"}},
+	}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 2)
+	_ = svc.StoreTurn(context.Background(), "s1", "u1", "a1", model.EmotionState{})
+
+	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(memories) == 0 {
+		t.Fatalf("expected short-term fallback memories")
+	}
+	if store.recentCalls != 0 {
+		t.Fatalf("expected no recent store call, got %d", store.recentCalls)
+	}
+}
+
+func TestServiceRetrieve_RecentStoreErrorGraceful(t *testing.T) {
+	store := &fakeStore{
+		matches:   []model.MemoryMatch{{Memory: model.Memory{ID: "low"}, Score: 0.1}},
+		recentErr: errors.New("recent boom"),
+	}
+	svc := NewService(store, fakeEmbedder{}, zap.NewNop(), 3, 0, 0.2, 2)
+
+	memories, err := svc.Retrieve(context.Background(), "s1", "hello")
+	if err != nil {
+		t.Fatalf("expected graceful recent fallback error, got: %v", err)
+	}
+	if len(memories) != 0 {
+		t.Fatalf("expected empty memories on recent fallback error, got %+v", memories)
+	}
+	if store.recentCalls != 1 {
+		t.Fatalf("expected one recent call, got %d", store.recentCalls)
+	}
+}
+
 
 func TestServiceStoreTurn_OK(t *testing.T) {
 	store := &fakeStore{}

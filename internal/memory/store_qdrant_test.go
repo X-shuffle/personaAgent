@@ -113,3 +113,100 @@ func TestQdrantStore_Search(t *testing.T) {
 		t.Fatalf("expected empty emotion round-trip, got %q", matches[0].Memory.Emotion)
 	}
 }
+
+func TestQdrantStore_RecentBySession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/persona_memories":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/persona_memories/points/scroll":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode scroll body: %v", err)
+			}
+			if body["limit"] != float64(3) {
+				t.Fatalf("expected limit=3, got %#v", body["limit"])
+			}
+			if body["with_payload"] != true {
+				t.Fatalf("expected with_payload=true, got %#v", body["with_payload"])
+			}
+			if body["with_vector"] != false {
+				t.Fatalf("expected with_vector=false, got %#v", body["with_vector"])
+			}
+			filter, ok := body["filter"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected filter object, got %#v", body["filter"])
+			}
+			must, ok := filter["must"].([]any)
+			if !ok || len(must) == 0 {
+				t.Fatalf("expected must filter, got %#v", filter["must"])
+			}
+			cond, ok := must[0].(map[string]any)
+			if !ok {
+				t.Fatalf("expected filter condition map, got %#v", must[0])
+			}
+			if cond["key"] != "session_id" {
+				t.Fatalf("expected session_id filter key, got %#v", cond["key"])
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"result": {
+					"points": [
+						{
+							"id": "p3",
+							"payload": {
+								"session_id": "s1",
+								"type": "episodic",
+								"content": "old",
+								"emotion": "",
+								"timestamp": 100,
+								"importance": 0.1
+							}
+						},
+						{
+							"id": "p1",
+							"payload": {
+								"session_id": "s1",
+								"type": "summary",
+								"content": "new",
+								"emotion": "",
+								"timestamp": 300,
+								"importance": 0.9
+							}
+						},
+						{
+							"id": "p2",
+							"payload": {
+								"session_id": "s1",
+								"type": "episodic",
+								"content": "mid",
+								"emotion": "",
+								"timestamp": 200,
+								"importance": 0.5
+							}
+						}
+					]
+				}
+			}`))
+		default:
+			t.Fatalf("unexpected route: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	store := NewQdrantStore(strings.TrimRight(srv.URL, "/"), "persona_memories", "", 4)
+	memories, err := store.RecentBySession(context.Background(), "s1", 3)
+	if err != nil {
+		t.Fatalf("unexpected recent err: %v", err)
+	}
+	if len(memories) != 3 {
+		t.Fatalf("expected 3 memories, got %+v", memories)
+	}
+	if memories[0].ID != "p1" || memories[1].ID != "p2" || memories[2].ID != "p3" {
+		t.Fatalf("expected timestamp-desc order, got %+v", memories)
+	}
+	if memories[0].Type != model.MemoryTypeSummary || memories[0].Timestamp != 300 {
+		t.Fatalf("unexpected mapping for first memory: %+v", memories[0])
+	}
+}

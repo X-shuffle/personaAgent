@@ -42,6 +42,10 @@ func (f *fakeStore) Search(_ context.Context, _ model.MemorySearchQuery) ([]mode
 	return nil, nil
 }
 
+func (f *fakeStore) RecentBySession(_ context.Context, _ string, _ int) ([]model.Memory, error) {
+	return nil, nil
+}
+
 func TestServiceIngest_TXT_OK(t *testing.T) {
 	store := &fakeStore{}
 	svc := NewService(fakeEmbedder{}, store, Config{Enabled: true, SegmentMaxChars: 500, MergeWindowSeconds: 90, EmbedBatchSize: 2, AllowedExtensions: []string{"txt", "json"}})

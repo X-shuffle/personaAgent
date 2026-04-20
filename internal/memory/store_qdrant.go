@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -143,18 +144,73 @@ func (s *QdrantStore) Search(ctx context.Context, query model.MemorySearchQuery)
 
 	matches := make([]model.MemoryMatch, 0, len(resp.Result))
 	for _, item := range resp.Result {
-		m := model.Memory{
-			ID:         toString(item.ID),
-			SessionID:  toString(item.Payload["session_id"]),
-			Type:       model.MemoryType(toString(item.Payload["type"])),
-			Content:    toString(item.Payload["content"]),
-			Emotion:    toString(item.Payload["emotion"]),
-			Timestamp:  toInt64(item.Payload["timestamp"]),
-			Importance: toFloat64(item.Payload["importance"]),
-		}
+		m := memoryFromPayload(item.ID, item.Payload)
 		matches = append(matches, model.MemoryMatch{Memory: m, Score: item.Score})
 	}
 	return matches, nil
+}
+
+func (s *QdrantStore) RecentBySession(ctx context.Context, sessionID string, limit int) ([]model.Memory, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+
+	if err := s.ensureCollection(ctx, s.VectorDim); err != nil {
+		return nil, err
+	}
+
+	// 使用 scroll + session 过滤拉取最近记忆，优先依赖 Qdrant 端按 timestamp 倒序返回。
+	body := map[string]any{
+		"limit":        limit,
+		"with_payload": true,
+		"with_vector":  false,
+		"filter": map[string]any{
+			"must": []map[string]any{
+				{
+					"key": "session_id",
+					"match": map[string]any{
+						"value": sessionID,
+					},
+				},
+			},
+		},
+		"order_by": map[string]any{
+			"key":       "timestamp",
+			"direction": "desc",
+		},
+	}
+
+	var resp struct {
+		Result struct {
+			Points []struct {
+				ID      any            `json:"id"`
+				Payload map[string]any `json:"payload"`
+			} `json:"points"`
+		} `json:"result"`
+	}
+	if err := s.doJSON(ctx, http.MethodPost, s.collectionPath("points", "scroll"), body, &resp, http.StatusOK); err != nil {
+		return nil, fmt.Errorf("qdrant recent by session: %w", err)
+	}
+
+	memories := make([]model.Memory, 0, len(resp.Result.Points))
+	for _, p := range resp.Result.Points {
+		m := memoryFromPayload(p.ID, p.Payload)
+		if m.SessionID == sessionID {
+			memories = append(memories, m)
+		}
+	}
+	// 本地再次按时间倒序，确保不同后端版本/返回顺序下结果稳定。
+	sort.Slice(memories, func(i, j int) bool {
+		return memories[i].Timestamp > memories[j].Timestamp
+	})
+	if len(memories) > limit {
+		memories = memories[:limit]
+	}
+	return memories, nil
 }
 
 func (s *QdrantStore) ensureCollection(ctx context.Context, vectorDim int) error {
@@ -282,6 +338,18 @@ func (s *QdrantStore) doJSONStatus(ctx context.Context, method, endpoint string,
 		}
 	}
 	return nil
+}
+
+func memoryFromPayload(id any, payload map[string]any) model.Memory {
+	return model.Memory{
+		ID:         toString(id),
+		SessionID:  toString(payload["session_id"]),
+		Type:       model.MemoryType(toString(payload["type"])),
+		Content:    toString(payload["content"]),
+		Emotion:    toString(payload["emotion"]),
+		Timestamp:  toInt64(payload["timestamp"]),
+		Importance: toFloat64(payload["importance"]),
+	}
 }
 
 func toString(v any) string {

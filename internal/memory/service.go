@@ -128,8 +128,27 @@ func (s *DefaultService) Retrieve(ctx context.Context, sessionID, userInput stri
 			zap.String("session_id", sessionID),
 			zap.Int("count", len(recent)),
 		)
+		return capSummaryMemories(recent, 1), nil
 	}
-	return recent, nil
+
+	// 冷启动兜底：当进程内 short-term 为空时，从持久化 store 拉取最近记忆。
+	recent, err = s.store.RecentBySession(ctx, sessionID, s.topK)
+	if err != nil {
+		s.logger.Warn("memory retrieve fallback recent store failed",
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+		return nil, nil
+	}
+	if len(recent) == 0 {
+		return nil, nil
+	}
+
+	s.logger.Debug("memory retrieve fallback recent store",
+		zap.String("session_id", sessionID),
+		zap.Int("count", len(recent)),
+	)
+	return capSummaryMemories(recent, 1), nil
 }
 
 func (s *DefaultService) StoreTurn(ctx context.Context, sessionID, userInput, assistantOutput string, emotion model.EmotionState) error {
