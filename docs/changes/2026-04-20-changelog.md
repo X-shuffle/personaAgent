@@ -90,3 +90,91 @@
 - `Option+Space` 在部分系统环境可能被输入法占用，当前已实现 `Cmd+Shift+Space` 回退。
 - 前端“搜索态”与“输入态”仍为占位，不包含真实 chat/history 数据流。
 - 目前通过 runtime 事件驱动聚焦，后续接入复杂 UI 时需留意 focus 抢占时机。
+
+## Entry: 接入 desktop Chat 请求链路与错误重试（Phase C）
+
+### Summary（Phase C）
+
+- 新增 `apps/desktop/backend/chat/client.go`，封装 `POST /chat` 调用并解析统一错误结构（`error.code` / `error.message`）。
+- 在 `apps/desktop/app.go` 增加 `SendChat` 绑定方法，desktop 启动时生成并复用 `session_id`，并接入 chat client。
+- 前端 `apps/desktop/frontend/src/App.tsx` 增加 `Enter` 发送、loading、回答展示、错误文案映射与 Retry 重发。
+- 当未配置 `DESKTOP_CHAT_BASE_URL` 时，后端默认回退到 `http://localhost:8080` 并输出告警日志，避免本地开发阻塞。
+- 更新 Wails 绑定导出与模型文件（含 `SendChat` 与 `ChatResult` 类型）。
+
+### Why（Phase C）
+
+- Phase B 已完成窗口与快捷键链路，但尚不能真正提问并拿到后端回复。
+- 本次在保持后端 API 零改动的前提下，把 desktop MVP 主路径推进到“输入 -> 请求 -> 返回/报错 -> 可重试”。
+
+### Changed Files（Phase C）
+
+- `apps/desktop/backend/chat/client.go`
+  - 新增 desktop 侧 chat HTTP client。
+  - 严格复用契约：请求 `session_id/message`，响应 `response`。
+  - 归一化错误结构（含状态码、错误码与消息）。
+- `apps/desktop/backend/chat/client_test.go`
+  - 新增 client 测试，覆盖成功响应、400/422/502/500 映射、配置缺失与输入校验。
+- `apps/desktop/app.go`
+  - 新增 `chatClient` 与 `sessionID` 状态。
+  - `startup` 时生成 session 并初始化 chat client。
+  - 新增 `SendChat(message)` 绑定方法给前端调用。
+  - 未配置 `DESKTOP_CHAT_BASE_URL` 时回退到 `http://localhost:8080`。
+- `apps/desktop/frontend/src/App.tsx`
+  - 接入 `SendChat` 调用。
+  - 增加 `isLoading` / `answer` / `errorText` / `lastMessage` 状态。
+  - 新增 Enter 发送与错误重试按钮。
+  - 新增 400/422/502/500 与网络/配置错误的用户文案映射。
+- `apps/desktop/frontend/src/App.css`
+  - 补充响应区、错误区、重试按钮和输入区样式。
+- `apps/desktop/frontend/wailsjs/go/main/App.d.ts`
+- `apps/desktop/frontend/wailsjs/go/main/App.js`
+- `apps/desktop/frontend/wailsjs/go/models.ts`
+  - 更新生成绑定，导出 `SendChat` 与 `ChatResult` / `chat.Error` 类型。
+- `apps/desktop/go.mod`
+  - 增加 `github.com/google/uuid` 依赖用于 session 生成。
+
+### Validation（Phase C）
+
+- 执行：`cd apps/desktop && go test ./...`
+- 结果：通过（`backend/chat` 测试通过）。
+- 执行：`cd apps/desktop && npm run build --prefix frontend`
+- 结果：通过（前端构建成功）。
+- 执行：`cd apps/desktop && go run github.com/wailsapp/wails/v2/cmd/wails@latest dev`
+- 结果：启动成功，日志显示：
+  - `DESKTOP_CHAT_BASE_URL is not set, fallback to http://localhost:8080`
+  - `global hotkey registered: Option+Space`
+- 执行：`go test ./...`（仓库根）
+- 结果：通过。
+
+### Risk / Notes（Phase C）
+
+- 当前默认回退 `http://localhost:8080` 仅适用于本地开发；联调/部署环境仍建议显式设置 `DESKTOP_CHAT_BASE_URL`。
+- `session_id` 仅在本次 desktop 进程内复用，重启后会重建；持久化会话属于后续历史阶段范围。
+- `isSearchMode` 仍为占位状态，尚未接入真实历史搜索数据流。
+
+## Entry: 修复输入法回车误触发发送（Phase C 补丁）
+
+### Summary（Phase C Patch）
+
+- 调整 `apps/desktop/frontend/src/App.tsx` 的 Enter 提交逻辑：输入法组合输入（IME composition）期间按回车不再触发发送。
+- 增加 `isComposing` 状态，并接入 `onCompositionStart` / `onCompositionEnd`。
+- Enter 触发前增加三重保护：`isComposing`、`event.nativeEvent.isComposing`、`keyCode===229`。
+
+### Why（Phase C Patch）
+
+- 中文输入法候选确认阶段会使用回车，若直接按 Enter 发送会造成误触发，影响聊天体验。
+
+### Changed Files（Phase C Patch）
+
+- `apps/desktop/frontend/src/App.tsx`
+  - 新增 IME 组合输入状态。
+  - 输入法组合期间屏蔽 Enter 发送。
+
+### Validation（Phase C Patch）
+
+- 执行：`cd apps/desktop && npm run build --prefix frontend`
+- 结果：通过。
+
+### Risk / Notes（Phase C Patch）
+
+- 该修复仅处理“组合输入中的回车”，不会影响普通英文输入下的 Enter 发送行为。

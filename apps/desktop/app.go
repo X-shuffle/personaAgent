@@ -3,14 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 
+	"desktop/backend/chat"
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.design/x/hotkey"
 )
 
 const (
 	focusInputEventName = "launcher:focus-input"
+	defaultChatBaseURL  = "http://localhost:8080"
 )
 
 // App struct
@@ -23,6 +28,14 @@ type App struct {
 	hotkeyLabel string
 	stopHotkey  chan struct{}
 	doneHotkey  chan struct{}
+
+	chatClient *chat.Client
+	sessionID  string
+}
+
+type ChatResult struct {
+	Response string      `json:"response,omitempty"`
+	Error    *chat.Error `json:"error,omitempty"`
 }
 
 // NewApp creates a new App application struct
@@ -35,6 +48,13 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx = ctx
+	a.sessionID = uuid.NewString()
+	baseURL := strings.TrimSpace(os.Getenv("DESKTOP_CHAT_BASE_URL"))
+	if baseURL == "" {
+		baseURL = defaultChatBaseURL
+		runtime.LogWarningf(ctx, "DESKTOP_CHAT_BASE_URL is not set, fallback to %s", defaultChatBaseURL)
+	}
+	a.chatClient = chat.NewClient(baseURL)
 	a.mu.Unlock()
 
 	runtime.WindowSetAlwaysOnTop(ctx, true)
@@ -88,6 +108,25 @@ func (a *App) ToggleLauncher() error {
 
 	a.showLocked()
 	return nil
+}
+
+// SendChat sends message to backend /chat and returns either response or structured error.
+func (a *App) SendChat(message string) ChatResult {
+	a.mu.Lock()
+	client := a.chatClient
+	sessionID := a.sessionID
+	ctx := a.ctx
+	a.mu.Unlock()
+
+	if client == nil {
+		return ChatResult{Error: &chat.Error{Code: "config_error", Message: "chat client is not initialized"}}
+	}
+
+	resp, appErr := client.Send(ctx, chat.ChatRequest{SessionID: sessionID, Message: message})
+	if appErr != nil {
+		return ChatResult{Error: appErr}
+	}
+	return ChatResult{Response: resp.Response}
 }
 
 func (a *App) showLocked() {
