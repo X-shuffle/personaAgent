@@ -1,3 +1,8 @@
 .env
 .claude/
 mcp_settings.json
+
+# Desktop (Wails + React)
+apps/desktop/frontend/node_modules/
+apps/desktop/frontend/dist/
+apps/desktop/build/bin/
