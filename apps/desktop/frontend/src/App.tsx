@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import ReactMarkdown from 'react-markdown'
 import './App.css'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { HideLauncher, SendChat } from '../wailsjs/go/main/App'
@@ -125,7 +126,8 @@ function App() {
       }
 
       if (event.key === 'Enter') {
-        if (isComposing || event.nativeEvent.isComposing || event.keyCode === 229) {
+        const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent
+        if (isComposing || nativeEvent.isComposing || nativeEvent.keyCode === 229) {
           return
         }
         event.preventDefault()
@@ -172,7 +174,11 @@ function App() {
         </button>
       </div>
 
-      {answer && <div className="response">{answer}</div>}
+      {answer && (
+        <div className="response">
+          <ReactMarkdown>{answer}</ReactMarkdown>
+        </div>
+      )}
 
       {errorText && (
         <div className="error-box">

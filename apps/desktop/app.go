@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"desktop/backend/chat"
-	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.design/x/hotkey"
 )
@@ -16,6 +15,7 @@ import (
 const (
 	focusInputEventName = "launcher:focus-input"
 	defaultChatBaseURL  = "http://localhost:8080"
+	fixedSessionID      = "desktop-default-session"
 )
 
 // App struct
@@ -48,7 +48,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx = ctx
-	a.sessionID = uuid.NewString()
+	a.sessionID = fixedSessionID
 	baseURL := strings.TrimSpace(os.Getenv("DESKTOP_CHAT_BASE_URL"))
 	if baseURL == "" {
 		baseURL = defaultChatBaseURL
