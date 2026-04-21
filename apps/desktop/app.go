@@ -242,6 +242,40 @@ func (a *App) SearchHistory(keyword string, limit int, offset int) ([]HistorySea
 	return items, nil
 }
 
+// LoadMessageContext loads hit message with its adjacent QA context for desktop jump.
+func (a *App) LoadMessageContext(messageID int64) ([]HistorySearchItem, error) {
+	a.mu.Lock()
+	store := a.historyStore
+	ctx := a.ctx
+	a.mu.Unlock()
+
+	if store == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	messages, err := store.LoadMessageContext(ctx, messageID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]HistorySearchItem, 0, len(messages))
+	for _, msg := range messages {
+		items = append(items, HistorySearchItem{
+			MessageID: msg.ID,
+			SessionID: msg.SessionID,
+			Role:      msg.Role,
+			Content:   msg.Content,
+			Status:    msg.Status,
+			ErrorCode: msg.ErrorCode,
+			CreatedAt: msg.CreatedAt.Unix(),
+		})
+	}
+	return items, nil
+}
+
 func (a *App) showLocked() {
 	runtime.Show(a.ctx)
 	runtime.WindowShow(a.ctx)

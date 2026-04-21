@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import './App.css'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { HideLauncher, SendChat } from '../wailsjs/go/main/App'
+import { loadMessageContext } from './features/history/api'
+import HistorySearchPanel from './features/history/HistorySearchPanel'
+import { useHistorySearch } from './features/history/useHistorySearch'
+import type { HistoryJumpTarget } from './features/history/types'
 
 const focusInputEventName = 'launcher:focus-input'
 
@@ -15,6 +19,15 @@ type ChatError = {
 type ChatResult = {
   response?: string
   error?: ChatError
+}
+
+type RenderedMessage = {
+  localId: string
+  messageId?: number
+  sessionId?: string
+  role: 'user' | 'assistant'
+  content: string
+  source: 'chat' | 'history'
 }
 
 function mapErrorToMessage(err?: ChatError): string {
@@ -46,13 +59,24 @@ function mapErrorToMessage(err?: ChatError): string {
 
 function App() {
   const inputRef = useRef<HTMLInputElement>(null)
+  const idCounterRef = useRef(0)
+  const highlightTimerRef = useRef<number | null>(null)
+  const jumpRequestSeqRef = useRef(0)
+
   const [query, setQuery] = useState('')
-  const [isSearchMode, setIsSearchMode] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isComposing, setIsComposing] = useState(false)
-  const [answer, setAnswer] = useState('')
   const [errorText, setErrorText] = useState('')
   const [lastMessage, setLastMessage] = useState('')
+  const [messages, setMessages] = useState<RenderedMessage[]>([])
+  const [pendingScrollMessageId, setPendingScrollMessageId] = useState<number | null>(null)
+  const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null)
+  const [jumpInfoText, setJumpInfoText] = useState('')
+
+  const nextLocalId = useCallback(() => {
+    idCounterRef.current += 1
+    return `${Date.now()}-${idCounterRef.current}`
+  }, [])
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => {
@@ -71,6 +95,14 @@ function App() {
     }
   }, [focusInput])
 
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current != null) {
+        window.clearTimeout(highlightTimerRef.current)
+      }
+    }
+  }, [])
+
   const submit = useCallback(
     async (rawMessage?: string) => {
       if (isLoading) {
@@ -84,8 +116,17 @@ function App() {
 
       setIsLoading(true)
       setErrorText('')
-      setAnswer('')
+      setJumpInfoText('')
       setLastMessage(message)
+      setMessages((prev) => [
+        ...prev,
+        {
+          localId: nextLocalId(),
+          role: 'user',
+          content: message,
+          source: 'chat',
+        },
+      ])
 
       try {
         const result = (await SendChat(message)) as ChatResult
@@ -93,14 +134,26 @@ function App() {
           setErrorText(mapErrorToMessage(result.error))
           return
         }
-        setAnswer(result?.response || '')
+
+        const response = result?.response || ''
+        if (response) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              localId: nextLocalId(),
+              role: 'assistant',
+              content: response,
+              source: 'chat',
+            },
+          ])
+        }
       } catch {
         setErrorText('请求失败，请稍后重试。')
       } finally {
         setIsLoading(false)
       }
     },
-    [isLoading, query],
+    [isLoading, nextLocalId, query],
   )
 
   const onEsc = useCallback(async () => {
@@ -109,13 +162,81 @@ function App() {
       return
     }
 
-    if (isSearchMode) {
-      setIsSearchMode(false)
+    await HideLauncher()
+  }, [query])
+
+  const onHistoryJump = useCallback(async (target: HistoryJumpTarget) => {
+    const requestSeq = jumpRequestSeqRef.current + 1
+    jumpRequestSeqRef.current = requestSeq
+
+    try {
+      const contextItems = await loadMessageContext(target.messageId)
+      if (jumpRequestSeqRef.current !== requestSeq) {
+        return
+      }
+
+      if (contextItems.length === 0) {
+        setJumpInfoText('目标消息未加载。')
+        return
+      }
+
+      const focusedMessages: RenderedMessage[] = contextItems.map((item) => {
+        const role: RenderedMessage['role'] = item.role === 'assistant' ? 'assistant' : 'user'
+        return {
+          localId: `history-${item.messageId}`,
+          messageId: item.messageId,
+          sessionId: item.sessionId,
+          role,
+          content: item.content,
+          source: 'history',
+        }
+      })
+
+      setMessages(focusedMessages)
+      setPendingScrollMessageId(target.messageId)
+      setJumpInfoText('已定位到历史命中。')
+    } catch {
+      if (jumpRequestSeqRef.current === requestSeq) {
+        setJumpInfoText('加载目标上下文失败。')
+      }
+    }
+  }, [])
+
+  const {
+    results: historyResults,
+    activeIndex: historyActiveIndex,
+    isLoading: isHistoryLoading,
+    errorText: historyErrorText,
+    onKeyDown: onHistoryKeyDown,
+    jumpToIndex,
+  } = useHistorySearch({
+    enabled: true,
+    query,
+    isComposing,
+    onJump: onHistoryJump,
+  })
+
+  useEffect(() => {
+    if (pendingScrollMessageId == null) {
       return
     }
 
-    await HideLauncher()
-  }, [isSearchMode, query])
+    const element = document.getElementById(`msg-${pendingScrollMessageId}`)
+    if (!element) {
+      return
+    }
+
+    element.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setHighlightedMessageId(pendingScrollMessageId)
+    setPendingScrollMessageId(null)
+
+    if (highlightTimerRef.current != null) {
+      window.clearTimeout(highlightTimerRef.current)
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((prev) => (prev === pendingScrollMessageId ? null : prev))
+    }, 1800)
+  }, [messages, pendingScrollMessageId])
 
   const onInputKeyDown = useCallback(
     async (event: KeyboardEvent<HTMLInputElement>) => {
@@ -125,34 +246,31 @@ function App() {
         return
       }
 
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        const handled = onHistoryKeyDown(event)
+        if (handled) {
+          return
+        }
+      }
+
       if (event.key === 'Enter') {
         const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent
-        if (isComposing || nativeEvent.isComposing || nativeEvent.keyCode === 229) {
+        if (isComposing || nativeEvent.isComposing) {
           return
         }
         event.preventDefault()
         await submit()
       }
     },
-    [isComposing, onEsc, submit],
+    [isComposing, onEsc, onHistoryKeyDown, submit],
   )
 
-  const placeholder = useMemo(() => {
-    if (isSearchMode) {
-      return '搜索历史（占位）...'
-    }
-    return '输入问题并按 Enter 发送...'
-  }, [isSearchMode])
+  const placeholder = '输入问题（自动搜索历史），按 Enter 发送...'
+
+  const hintText = '↑/↓ 选择历史结果；Enter 发送；Esc：清空输入 → 隐藏窗口'
 
   return (
     <div id="app" className="launcher">
-      <div className="launcher-header">
-        <span className="mode">{isSearchMode ? '搜索态' : '输入态'}</span>
-        <button className="btn" onClick={() => setIsSearchMode((prev) => !prev)} disabled={isLoading}>
-          {isSearchMode ? '退出搜索' : '进入搜索'}
-        </button>
-      </div>
-
       <div className="input-box">
         <input
           ref={inputRef}
@@ -174,11 +292,43 @@ function App() {
         </button>
       </div>
 
-      {answer && (
-        <div className="response">
-          <ReactMarkdown>{answer}</ReactMarkdown>
-        </div>
-      )}
+      <HistorySearchPanel
+        query={query}
+        results={historyResults}
+        activeIndex={historyActiveIndex}
+        isLoading={isHistoryLoading}
+        errorText={historyErrorText}
+        onSelect={(index) => {
+          jumpToIndex(index)
+        }}
+      />
+
+      {jumpInfoText && <div className="jump-info">{jumpInfoText}</div>}
+
+      <div className="message-list" role="log" aria-live="polite">
+        {messages.length === 0 ? (
+          <div className="message-empty">暂无消息</div>
+        ) : (
+          messages.map((item) => {
+            const domId = item.messageId != null ? `msg-${item.messageId}` : `msg-local-${item.localId}`
+            const isHighlighted = item.messageId != null && item.messageId === highlightedMessageId
+            const className = isHighlighted
+              ? `message-item message-${item.role} message-highlighted`
+              : `message-item message-${item.role}`
+            return (
+              <div id={domId} key={domId} className={className} data-message-id={item.messageId ?? ''}>
+                <div className="message-meta">
+                  <span className="message-role">{item.role === 'assistant' ? '助手' : '你'}</span>
+                  {item.source === 'history' && <span className="message-source">历史命中</span>}
+                </div>
+                <div className="message-content">
+                  {item.role === 'assistant' ? <ReactMarkdown>{item.content}</ReactMarkdown> : item.content}
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
 
       {errorText && (
         <div className="error-box">
@@ -189,7 +339,7 @@ function App() {
         </div>
       )}
 
-      <div className="hint">Enter 发送；Esc：清空输入 → 退出搜索 → 隐藏窗口</div>
+      <div className="hint">{hintText}</div>
     </div>
   )
 }

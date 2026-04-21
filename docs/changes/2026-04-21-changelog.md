@@ -144,3 +144,56 @@
 - 当前仍使用固定 `session_id`（`desktop-default-session`），后续如进入多会话能力需拆分。
 - 本次仅打通 D 阶段调用链，E 阶段 UI（历史搜索面板、↑/↓、Enter 跳转）尚未实现。
 - `github.com/mattn/go-sqlite3` 依赖 CGO，CI/打包环境需确保编译链可用。
+
+## Entry: desktop 历史搜索自动联动、命中上下文定位与聚焦展示
+
+### Summary（desktop 搜索聚焦）
+
+- `apps/desktop/frontend/src/App.tsx` 重构输入与搜索交互：去掉搜索态切换按钮，输入框改为自动触发历史搜索，`Enter` 统一发送聊天请求。
+- `apps/desktop/frontend/src/App.tsx` 接入“命中上下文加载 + 真实消息定位”：选择历史结果后调用 `LoadMessageContext`，仅渲染该命中上下文并高亮定位，保持界面聚焦。
+- `apps/desktop/frontend/src/App.tsx` 修复“首次点击命中偶发不生效”问题：由 `jumpTarget + useEffect` 间接链路改为点击后直接加载，并增加请求序号保护，避免异步竞争覆盖。
+- `apps/desktop/app.go` 与 `apps/desktop/backend/history/store.go` 新增 `LoadMessageContext` 后端能力，按命中角色返回相邻 Q/A（user 命中带后续 assistant；assistant 命中带前序 user）。
+- 新增 `apps/desktop/frontend/src/features/history/*` 模块（`api.ts`、`useHistorySearch.ts`、`HistorySearchPanel.tsx`、`types.ts`）承接搜索请求、键盘导航与结果面板渲染。
+- `apps/desktop/frontend/wailsjs/go/main/App.{d.ts,js}` 同步暴露 `LoadMessageContext` 绑定。
+
+### Why
+
+- 旧交互依赖“输入态/搜索态”切换，切换成本高，且与“输入即搜”的桌面快启体验不一致。
+- 历史命中后若继续与当前消息流混排，注意力容易分散，不利于快速确认命中上下文。
+- 首次点击不稳定的核心原因是状态驱动异步链路存在时序竞争，需要改为直接触发并做并发保护。
+
+### Changed Files
+
+- `apps/desktop/app.go`
+  - 新增 `LoadMessageContext(messageID int64)`，向前端暴露历史命中上下文读取。
+- `apps/desktop/backend/history/store.go`
+  - 新增 `LoadMessageContext`、`getMessageByID`、`getAdjacentMessage`，按角色加载相邻 Q/A。
+- `apps/desktop/frontend/src/App.tsx`
+  - 去除搜索态切换，输入即搜。
+  - `Enter` 只负责发送聊天请求。
+  - 选择历史结果后直接加载上下文、替换为聚焦视图并滚动高亮。
+  - 新增请求序号防抖并发保护，修复首点不稳定。
+- `apps/desktop/frontend/src/App.css`
+  - 新增历史结果面板、消息列表、高亮与提示样式。
+- `apps/desktop/frontend/src/features/history/types.ts`
+- `apps/desktop/frontend/src/features/history/api.ts`
+- `apps/desktop/frontend/src/features/history/useHistorySearch.ts`
+- `apps/desktop/frontend/src/features/history/HistorySearchPanel.tsx`
+  - 新建历史搜索功能模块。
+- `apps/desktop/frontend/wailsjs/go/main/App.d.ts`
+- `apps/desktop/frontend/wailsjs/go/main/App.js`
+  - 新增 `LoadMessageContext` 前端绑定。
+
+### Validation
+
+- 执行：`npm --prefix apps/desktop/frontend run build`
+  - 结果：通过。
+- 执行：`go -C apps/desktop test ./...`
+  - 结果：通过。
+- 执行：`go test ./...`
+  - 结果：通过。
+
+### Risk / Notes
+
+- 当前“命中后聚焦视图”策略会覆盖当前消息区展示，这是刻意的专注设计；若后续需要“返回当前会话视图”，需补充显式入口。
+- `LoadMessageContext` 目前只返回命中及相邻单轮 Q/A，尚不包含多轮上下文窗口。

@@ -263,6 +263,109 @@ LIMIT ? OFFSET ?;
 	return messages, nil
 }
 
+func (s *Store) LoadMessageContext(ctx context.Context, messageID int64) ([]Message, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("history store is not initialized")
+	}
+	if messageID <= 0 {
+		return nil, errors.New("message id is required")
+	}
+
+	hit, found, err := s.getMessageByID(ctx, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return []Message{}, nil
+	}
+
+	switch hit.Role {
+	case RoleUser:
+		nextAssistant, ok, err := s.getAdjacentMessage(ctx, hit.SessionID, hit.CreatedAt.Unix(), hit.ID, true, RoleAssistant)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return []Message{hit}, nil
+		}
+		return []Message{hit, nextAssistant}, nil
+	case RoleAssistant:
+		prevUser, ok, err := s.getAdjacentMessage(ctx, hit.SessionID, hit.CreatedAt.Unix(), hit.ID, false, RoleUser)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return []Message{hit}, nil
+		}
+		return []Message{prevUser, hit}, nil
+	default:
+		return []Message{hit}, nil
+	}
+}
+
+func (s *Store) getMessageByID(ctx context.Context, messageID int64) (Message, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, session_id, role, content, status, error_code, created_at
+FROM messages
+WHERE id = ?;
+`, messageID)
+
+	var item Message
+	var createdAt int64
+	if err := row.Scan(&item.ID, &item.SessionID, &item.Role, &item.Content, &item.Status, &item.ErrorCode, &createdAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Message{}, false, nil
+		}
+		return Message{}, false, fmt.Errorf("get message by id: %w", err)
+	}
+	item.CreatedAt = time.Unix(createdAt, 0)
+	return item, true, nil
+}
+
+func (s *Store) getAdjacentMessage(ctx context.Context, sessionID string, createdAt int64, messageID int64, forward bool, role string) (Message, bool, error) {
+	if forward {
+		row := s.db.QueryRowContext(ctx, `
+SELECT id, session_id, role, content, status, error_code, created_at
+FROM messages
+WHERE session_id = ?
+  AND role = ?
+  AND (created_at > ? OR (created_at = ? AND id > ?))
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
+`, sessionID, role, createdAt, createdAt, messageID)
+		var item Message
+		var created int64
+		if err := row.Scan(&item.ID, &item.SessionID, &item.Role, &item.Content, &item.Status, &item.ErrorCode, &created); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return Message{}, false, nil
+			}
+			return Message{}, false, fmt.Errorf("get next adjacent message: %w", err)
+		}
+		item.CreatedAt = time.Unix(created, 0)
+		return item, true, nil
+	}
+
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, session_id, role, content, status, error_code, created_at
+FROM messages
+WHERE session_id = ?
+  AND role = ?
+  AND (created_at < ? OR (created_at = ? AND id < ?))
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+`, sessionID, role, createdAt, createdAt, messageID)
+	var item Message
+	var created int64
+	if err := row.Scan(&item.ID, &item.SessionID, &item.Role, &item.Content, &item.Status, &item.ErrorCode, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Message{}, false, nil
+		}
+		return Message{}, false, fmt.Errorf("get previous adjacent message: %w", err)
+	}
+	item.CreatedAt = time.Unix(created, 0)
+	return item, true, nil
+}
+
 func (s *Store) PersistUserTurn(ctx context.Context, sessionID, content string) (int64, error) {
 	return s.AppendMessage(ctx, sessionID, RoleUser, content, StatusOK, "")
 }
