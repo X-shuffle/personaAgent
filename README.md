@@ -186,6 +186,11 @@ cd apps/desktop
 wails build
 ```
 
+```bash
+cd /Users/xshuffle/my_work_project/personaAgent/apps/desktop
+HTTPS_PROXY=http://127.0.0.1:10808 HTTP_PROXY=http://127.0.0.1:10808 ALL_PROXY=socks5://127.0.0.1:10808 GOPROXY=https://proxy.golang.org,direct DESKTOP_CHAT_BASE_URL=http://localhost:8080 go run github.com/wailsapp/wails/v2/cmd/wails@latest dev
+```
+
 ## 🧪 Testing
 
 ```bash
