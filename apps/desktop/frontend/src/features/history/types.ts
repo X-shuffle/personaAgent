@@ -11,5 +11,4 @@ export type HistorySearchItem = {
 
 export type HistoryJumpTarget = {
   messageId: number
-  sessionId: string
 }

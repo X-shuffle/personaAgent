@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// 验证中文关键词可命中多条消息，并按时间倒序返回。
 func TestSearchMessages_ChineseKeywordHit(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -34,17 +35,34 @@ func TestSearchMessages_ChineseKeywordHit(t *testing.T) {
 	}
 }
 
-func TestSearchMessages_EmptyKeywordReturnsEmpty(t *testing.T) {
+// 验证空关键词时返回最近消息，用于前端“最近浏览”模式。
+func TestSearchMessages_EmptyKeywordReturnsRecent(t *testing.T) {
 	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.UpsertSession(ctx, "s-recent", "recent"); err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	if _, err := store.PersistUserTurn(ctx, "s-recent", "第一条"); err != nil {
+		t.Fatalf("persist first message: %v", err)
+	}
+	if _, err := store.PersistAssistantTurn(ctx, "s-recent", "第二条"); err != nil {
+		t.Fatalf("persist second message: %v", err)
+	}
+
 	hits, err := store.SearchMessages(context.Background(), "   ", 10, 0)
 	if err != nil {
 		t.Fatalf("search with empty keyword: %v", err)
 	}
-	if len(hits) != 0 {
-		t.Fatalf("expected empty result, got %d", len(hits))
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 recent results, got %d", len(hits))
+	}
+	if hits[0].Content != "第二条" || hits[1].Content != "第一条" {
+		t.Fatalf("unexpected recent order/content: %+v", hits)
 	}
 }
 
+// 验证 LIKE 特殊字符会被正确转义，避免误命中过多记录。
 func TestSearchMessages_LikeEscaping(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -71,6 +89,7 @@ func TestSearchMessages_LikeEscaping(t *testing.T) {
 	}
 }
 
+// 验证分页参数生效，不同 offset 返回不同结果页。
 func TestSearchMessages_Pagination(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

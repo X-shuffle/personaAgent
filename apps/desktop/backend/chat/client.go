@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 )
 
-const defaultTimeout = 15 * time.Second
+const defaultTimeout = 120 * time.Second
 
 type ChatRequest struct {
 	SessionID string `json:"session_id"`
@@ -82,6 +83,7 @@ func (c *Client) Send(ctx context.Context, req ChatRequest) (ChatResponse, *Erro
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		log.Printf("[desktop/chat] request failed url=%s session_id=%s err=%v", c.baseURL+"/chat", sessionID, err)
 		return ChatResponse{}, &Error{Code: "network_error", Message: "failed to reach backend chat service"}
 	}
 	defer httpResp.Body.Close()

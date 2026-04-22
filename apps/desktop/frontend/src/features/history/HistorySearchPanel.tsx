@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { HistorySearchItem } from './types'
 
 type HistorySearchPanelProps = {
@@ -11,6 +12,21 @@ type HistorySearchPanelProps = {
 
 export default function HistorySearchPanel(props: HistorySearchPanelProps) {
   const { query, results, activeIndex, isLoading, errorText, onSelect } = props
+  const listRef = useRef<HTMLUListElement | null>(null)
+
+  useEffect(() => {
+    if (activeIndex < 0) {
+      return
+    }
+
+    // 保证键盘切换高亮项时，列表视口自动跟随到可见区域。
+    const activeItem = listRef.current?.querySelector<HTMLLIElement>(`[data-history-index="${activeIndex}"]`)
+    if (!activeItem) {
+      return
+    }
+
+    activeItem.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex, results])
 
   return (
     <div className="history-panel" aria-live="polite">
@@ -22,7 +38,7 @@ export default function HistorySearchPanel(props: HistorySearchPanelProps) {
       )}
 
       {results.length > 0 && (
-        <ul className="history-list" role="listbox" aria-label="历史搜索结果">
+        <ul ref={listRef} className="history-list" role="listbox" aria-label="历史搜索结果">
           {results.map((item, index) => {
             const isActive = index === activeIndex
             const rowClassName = isActive ? 'history-item history-item-active' : 'history-item'
@@ -32,6 +48,7 @@ export default function HistorySearchPanel(props: HistorySearchPanelProps) {
                 className={rowClassName}
                 role="option"
                 aria-selected={isActive}
+                data-history-index={index}
                 onMouseDown={(event) => {
                   event.preventDefault()
                 }}

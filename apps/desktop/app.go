@@ -22,6 +22,8 @@ const (
 	defaultHistorySubDir = ".persona-agent/desktop"
 	defaultHistoryDBName = "history.sqlite"
 	defaultSessionTitle  = ""
+	// 启动器默认贴近屏幕顶部的偏移，和 macOS 状态栏入口保持一致。
+	launcherTopOffsetPx = 72
 )
 
 // App struct
@@ -35,10 +37,12 @@ type App struct {
 	stopHotkey  chan struct{}
 	doneHotkey  chan struct{}
 
+	statusbarDone chan struct{}
+
 	chatClient   *chat.Client
-	historyStore *history.Store
-	historyDB    string
-	sessionID    string
+	historyStore   *history.Store
+	historyDB      string
+	sessionID      string
 }
 
 type ChatResult struct {
@@ -80,6 +84,7 @@ func (a *App) startup(ctx context.Context) {
 	if err != nil {
 		runtime.LogWarningf(ctx, "history disabled: %v", err)
 	} else {
+		// 历史库可用时，固定绑定到同一个 desktop session，便于后续搜索/回跳。
 		a.mu.Lock()
 		a.historyStore = store
 		a.historyDB = path
@@ -91,12 +96,14 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	runtime.WindowSetAlwaysOnTop(ctx, true)
+	a.startStatusBar()
 	_ = a.HideLauncher()
 	a.registerGlobalHotkeyWithFallback()
 }
 
 func (a *App) shutdown(context.Context) {
 	a.unregisterGlobalHotkey()
+	a.stopStatusBar()
 
 	a.mu.Lock()
 	store := a.historyStore
@@ -176,30 +183,19 @@ func (a *App) SendChat(message string) ChatResult {
 		return ChatResult{Error: &chat.Error{StatusCode: 422, Code: "invalid_argument", Message: "message is required"}}
 	}
 
-	if store != nil {
-		if err := store.UpsertSession(ctx, sessionID, defaultSessionTitle); err != nil {
-			a.logHistoryWarning("upsert session before send failed", err)
-		}
-		if _, err := store.PersistUserTurn(ctx, sessionID, trimmedMessage); err != nil {
-			a.logHistoryWarning("persist user turn failed", err)
-		}
-	}
-
 	resp, appErr := client.Send(ctx, chat.ChatRequest{SessionID: sessionID, Message: trimmedMessage})
 	if appErr != nil {
-		if store != nil {
-			errContent := strings.TrimSpace(appErr.Message)
-			if errContent == "" {
-				errContent = "chat request failed"
-			}
-			if _, err := store.PersistAssistantError(ctx, sessionID, normalizeHistoryErrorCode(appErr), errContent); err != nil {
-				a.logHistoryWarning("persist assistant error failed", err)
-			}
-		}
 		return ChatResult{Error: appErr}
 	}
 
 	if store != nil {
+		// 仅在后端成功后落盘，避免把失败请求写入历史。
+		if err := store.UpsertSession(ctx, sessionID, defaultSessionTitle); err != nil {
+			a.logHistoryWarning("upsert session after success failed", err)
+		}
+		if _, err := store.PersistUserTurn(ctx, sessionID, trimmedMessage); err != nil {
+			a.logHistoryWarning("persist user turn failed", err)
+		}
 		if _, err := store.PersistAssistantTurn(ctx, sessionID, resp.Response); err != nil {
 			a.logHistoryWarning("persist assistant turn failed", err)
 		}
@@ -276,24 +272,75 @@ func (a *App) LoadMessageContext(messageID int64) ([]HistorySearchItem, error) {
 	return items, nil
 }
 
+// showLocked 在持锁状态下显示并激活窗口，同时触发前端输入框聚焦事件。
 func (a *App) showLocked() {
 	runtime.Show(a.ctx)
 	runtime.WindowShow(a.ctx)
 	runtime.WindowUnminimise(a.ctx)
-	runtime.WindowCenter(a.ctx)
+	a.positionLauncherTopCenterLocked()
 	runtime.EventsEmit(a.ctx, focusInputEventName)
 	a.visible = true
 }
 
+// positionLauncherTopCenterLocked 将窗口定位到“当前屏幕顶部居中”，并限制在可见区域内。
+func (a *App) positionLauncherTopCenterLocked() {
+	runtime.WindowCenter(a.ctx)
+
+	centerX, centerY := runtime.WindowGetPosition(a.ctx)
+	_, windowHeight := runtime.WindowGetSize(a.ctx)
+	// 先中心定位，再按当前屏幕可见区域回推到顶部，避免跨屏时坐标漂移。
+	screens, err := runtime.ScreenGetAll(a.ctx)
+	if err != nil || len(screens) == 0 || windowHeight <= 0 {
+		return
+	}
+
+	screenHeight := 0
+	for _, screen := range screens {
+		if screen.IsCurrent {
+			screenHeight = screen.Size.Height
+			if screenHeight <= 0 {
+				screenHeight = screen.Height
+			}
+			break
+		}
+	}
+	if screenHeight <= 0 {
+		screenHeight = screens[0].Size.Height
+		if screenHeight <= 0 {
+			screenHeight = screens[0].Height
+		}
+	}
+	if screenHeight <= 0 {
+		return
+	}
+
+	originY := centerY - (screenHeight-windowHeight)/2
+	targetY := originY + launcherTopOffsetPx
+	maxY := originY + (screenHeight - windowHeight)
+	if maxY < originY {
+		maxY = originY
+	}
+	if targetY > maxY {
+		targetY = maxY
+	}
+	if targetY < originY {
+		targetY = originY
+	}
+
+	runtime.WindowSetPosition(a.ctx, centerX, targetY)
+}
+
+// hideLocked 在持锁状态下隐藏窗口，并同步可见性状态。
 func (a *App) hideLocked() {
 	runtime.WindowHide(a.ctx)
-	runtime.Hide(a.ctx)
 	a.visible = false
 }
 
+// registerGlobalHotkeyWithFallback 注册全局快捷键，主键失败时自动回退到备选组合。
 func (a *App) registerGlobalHotkeyWithFallback() {
 	a.unregisterGlobalHotkey()
 
+	// 主快捷键优先使用 Option+Space，冲突时自动降级到 Cmd+Shift+Space。
 	primary := hotkey.New([]hotkey.Modifier{hotkey.ModOption}, hotkey.KeySpace)
 	if err := primary.Register(); err == nil {
 		a.attachHotkey(primary, "Option+Space")
@@ -311,6 +358,7 @@ func (a *App) registerGlobalHotkeyWithFallback() {
 	runtime.LogWarning(a.ctx, "failed to register both primary and fallback global hotkeys")
 }
 
+// attachHotkey 绑定热键监听协程，把按键事件转成窗口显隐切换。
 func (a *App) attachHotkey(hk *hotkey.Hotkey, label string) {
 	a.mu.Lock()
 	a.hotkey = hk
@@ -336,6 +384,7 @@ func (a *App) attachHotkey(hk *hotkey.Hotkey, label string) {
 	}(hk, stopHotkey, doneHotkey)
 }
 
+// unregisterGlobalHotkey 停止热键监听并释放系统级快捷键注册。
 func (a *App) unregisterGlobalHotkey() {
 	a.mu.Lock()
 	hk := a.hotkey
@@ -358,6 +407,7 @@ func (a *App) unregisterGlobalHotkey() {
 	}
 }
 
+// logHistoryWarning 在上下文可用时记录历史模块告警日志。
 func (a *App) logHistoryWarning(prefix string, err error) {
 	if err == nil {
 		return
@@ -370,6 +420,7 @@ func (a *App) logHistoryWarning(prefix string, err error) {
 	}
 }
 
+// openHistoryStore 打开历史数据库并执行迁移，失败时确保回收资源。
 func openHistoryStore(ctx context.Context) (*history.Store, string, error) {
 	path, err := resolveHistoryDBPath()
 	if err != nil {
@@ -389,6 +440,7 @@ func openHistoryStore(ctx context.Context) (*history.Store, string, error) {
 	return store, path, nil
 }
 
+// resolveHistoryDBPath 解析历史库路径：优先环境变量，否则落到用户目录默认位置。
 func resolveHistoryDBPath() (string, error) {
 	if fromEnv := strings.TrimSpace(os.Getenv(defaultHistoryDBEnv)); fromEnv != "" {
 		return fromEnv, nil
@@ -407,15 +459,3 @@ func resolveHistoryDBPath() (string, error) {
 	return filepath.Join(dir, defaultHistoryDBName), nil
 }
 
-func normalizeHistoryErrorCode(appErr *chat.Error) string {
-	if appErr == nil {
-		return "internal_error"
-	}
-	if code := strings.TrimSpace(appErr.Code); code != "" {
-		return code
-	}
-	if appErr.StatusCode > 0 {
-		return fmt.Sprintf("http_%d", appErr.StatusCode)
-	}
-	return "internal_error"
-}

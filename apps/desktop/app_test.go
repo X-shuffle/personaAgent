@@ -50,7 +50,7 @@ func TestAppSendChat_PersistsSuccessTurns(t *testing.T) {
 	}
 }
 
-func TestAppSendChat_PersistsErrorTurn(t *testing.T) {
+func TestAppSendChat_DoesNotPersistErrorTurn(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":{"code":"upstream_error","message":"llm request failed"}}`))
@@ -78,14 +78,8 @@ func TestAppSendChat_PersistsErrorTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get messages: %v", err)
 	}
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messages))
-	}
-	if messages[0].Role != history.RoleUser || messages[0].Status != history.StatusOK {
-		t.Fatalf("unexpected user message: %+v", messages[0])
-	}
-	if messages[1].Role != history.RoleAssistant || messages[1].Status != history.StatusError || messages[1].ErrorCode != "upstream_error" {
-		t.Fatalf("unexpected error message: %+v", messages[1])
+	if len(messages) != 0 {
+		t.Fatalf("expected 0 messages, got %d", len(messages))
 	}
 }
 

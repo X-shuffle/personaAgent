@@ -67,6 +67,7 @@ func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (stri
 
 	p, err := o.PersonaProvider.GetPersona(ctx, sessionID)
 	if err != nil {
+		o.Logger.Error("get persona failed", zap.String("session_id", sessionID), zap.Error(err))
 		return "", fmt.Errorf("get persona: %w", err)
 	}
 
@@ -124,6 +125,7 @@ func (o Orchestrator) Chat(ctx context.Context, sessionID, message string) (stri
 	messages := o.PromptBuilder.Build(promptPersona, memories, detectedEmotion, message)
 	responseText, err := o.generateChatResponse(ctx, messages)
 	if err != nil {
+		o.Logger.Error("generate chat response failed", zap.String("session_id", sessionID), zap.Error(err))
 		return "", err
 	}
 
