@@ -4,42 +4,42 @@
     width: 100%;
     margin: 0;
     box-sizing: border-box;
-    padding: 10px 10px 8px;
+    padding: 12px 12px 10px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     text-align: left;
     color: #edf3ff;
-    background: linear-gradient(180deg, rgb(51, 55, 64) 0%, rgb(39, 42, 49) 100%);
-    border: 1px solid rgba(0, 0, 0, 0.38);
+    background: #2b2f37;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     overflow: hidden;
-    box-shadow: none;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
 }
 
 .input-box {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 7px;
-    border-radius: 9px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    gap: 10px;
+    padding: 9px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 .input-box .input {
     flex: 1;
     border: none;
     outline: none;
-    height: 34px;
-    line-height: 34px;
+    height: 38px;
+    line-height: 38px;
     padding: 0 10px;
-    border-radius: 7px;
+    border-radius: 8px;
     background: transparent;
     color: #f7fbff;
-    font-size: 18px;
-    font-weight: 800;
+    font-size: 20px;
+    font-weight: 760;
 }
 
 .input-box .input::placeholder {
@@ -83,9 +83,9 @@
     text-align: left;
     padding: 7px;
     border-radius: 9px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(22, 26, 33, 0.94);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(19, 22, 28, 0.96);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
 }
 
 .history-state {
@@ -203,9 +203,9 @@
 }
 
 .message-item {
-    padding: 7px 9px;
+    padding: 8px 10px;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 

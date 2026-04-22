@@ -22,8 +22,17 @@ const (
 	defaultHistorySubDir = ".persona-agent/desktop"
 	defaultHistoryDBName = "history.sqlite"
 	defaultSessionTitle  = ""
-	// 启动器默认贴近屏幕顶部的偏移，和 macOS 状态栏入口保持一致。
-	launcherTopOffsetPx = 72
+
+	launcherWidthRatio  = 0.35
+	launcherHeightRatio = 0.7
+	launcherMinWidth    = 760
+	launcherMaxWidth    = 1160
+	launcherMinHeight   = 420
+	launcherMaxHeight   = 860
+
+	launcherTopOffsetRatio = 0.07
+	launcherMinTopOffsetPx = 56
+	launcherMaxTopOffsetPx = 96
 )
 
 // App struct
@@ -284,38 +293,31 @@ func (a *App) showLocked() {
 
 // positionLauncherTopCenterLocked 将窗口定位到“当前屏幕顶部居中”，并限制在可见区域内。
 func (a *App) positionLauncherTopCenterLocked() {
+	screenWidth, screenHeight, ok := a.currentScreenSizeLocked()
+	if ok {
+		targetWidth := clampInt(int(float64(screenWidth)*launcherWidthRatio), launcherMinWidth, launcherMaxWidth)
+		targetHeight := clampInt(int(float64(screenHeight)*launcherHeightRatio), launcherMinHeight, launcherMaxHeight)
+		runtime.WindowSetSize(a.ctx, targetWidth, targetHeight)
+	}
+
 	runtime.WindowCenter(a.ctx)
 
 	centerX, centerY := runtime.WindowGetPosition(a.ctx)
 	_, windowHeight := runtime.WindowGetSize(a.ctx)
-	// 先中心定位，再按当前屏幕可见区域回推到顶部，避免跨屏时坐标漂移。
-	screens, err := runtime.ScreenGetAll(a.ctx)
-	if err != nil || len(screens) == 0 || windowHeight <= 0 {
+	if windowHeight <= 0 {
 		return
 	}
 
-	screenHeight := 0
-	for _, screen := range screens {
-		if screen.IsCurrent {
-			screenHeight = screen.Size.Height
-			if screenHeight <= 0 {
-				screenHeight = screen.Height
-			}
-			break
+	if !ok {
+		_, screenHeight, ok = a.currentScreenSizeLocked()
+		if !ok || screenHeight <= 0 {
+			return
 		}
-	}
-	if screenHeight <= 0 {
-		screenHeight = screens[0].Size.Height
-		if screenHeight <= 0 {
-			screenHeight = screens[0].Height
-		}
-	}
-	if screenHeight <= 0 {
-		return
 	}
 
 	originY := centerY - (screenHeight-windowHeight)/2
-	targetY := originY + launcherTopOffsetPx
+	topOffset := clampInt(int(float64(screenHeight)*launcherTopOffsetRatio), launcherMinTopOffsetPx, launcherMaxTopOffsetPx)
+	targetY := originY + topOffset
 	maxY := originY + (screenHeight - windowHeight)
 	if maxY < originY {
 		maxY = originY
@@ -328,6 +330,52 @@ func (a *App) positionLauncherTopCenterLocked() {
 	}
 
 	runtime.WindowSetPosition(a.ctx, centerX, targetY)
+}
+
+func (a *App) currentScreenSizeLocked() (int, int, bool) {
+	screens, err := runtime.ScreenGetAll(a.ctx)
+	if err != nil || len(screens) == 0 {
+		return 0, 0, false
+	}
+
+	for _, screen := range screens {
+		if !screen.IsCurrent {
+			continue
+		}
+		width, height := screenSize(screen)
+		if width > 0 && height > 0 {
+			return width, height, true
+		}
+	}
+
+	width, height := screenSize(screens[0])
+	if width > 0 && height > 0 {
+		return width, height, true
+	}
+
+	return 0, 0, false
+}
+
+func screenSize(screen runtime.Screen) (int, int) {
+	width := screen.Size.Width
+	if width <= 0 {
+		width = screen.Width
+	}
+	height := screen.Size.Height
+	if height <= 0 {
+		height = screen.Height
+	}
+	return width, height
+}
+
+func clampInt(value int, min int, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 // hideLocked 在持锁状态下隐藏窗口，并同步可见性状态。

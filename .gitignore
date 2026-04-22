@@ -5,4 +5,6 @@ mcp_settings.json
 # Desktop (Wails + React)
 apps/desktop/frontend/node_modules/
 apps/desktop/frontend/dist/
+apps/desktop/frontend/.vite/
 apps/desktop/build/bin/
+apps/desktop/build/windows/nsis/

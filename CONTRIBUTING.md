@@ -5,22 +5,37 @@ Thanks for your interest in contributing.
 ## Development setup
 
 1. Fork this repository and create a feature branch from `main`.
-2. Install dependencies:
+1. Install dependencies:
 
 ```bash
 go mod tidy
 ```
 
-3. Copy environment file and configure required variables:
+1. Copy environment file and configure required variables:
 
 ```bash
 cp .env.example .env
 ```
 
-4. Run the server locally:
+1. Run the server locally:
 
 ```bash
 go run ./cmd/server
+```
+
+1. (Desktop) Run the desktop launcher in another terminal:
+
+```bash
+cd apps/desktop
+wails dev
+```
+
+Optional frontend-only debug:
+
+```bash
+cd apps/desktop/frontend
+npm install
+npm run dev
 ```
 
 ## Contribution guidelines
@@ -36,6 +51,14 @@ Run full test suite before opening PR:
 
 ```bash
 go test ./...
+```
+
+If your change touches desktop:
+
+```bash
+cd apps/desktop/frontend
+npm install
+npm run build
 ```
 
 ## Commit and PR checklist

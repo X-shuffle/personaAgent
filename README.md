@@ -147,6 +147,45 @@ See `.env.example` for full config. Core groups:
 - Ingestion: `INGEST_ENABLED`, `INGEST_ALLOWED_EXTENSIONS`
 - MCP: `MCP_SETTINGS_PATH`, `TOOL_MAX_EXEC_ROUNDS`
 
+## 🖥️ Desktop (Wails + React)
+
+Desktop launcher code lives in `apps/desktop`.
+
+### Run desktop in development
+
+1. Start backend API first (desktop calls `/chat` on `http://localhost:8080` by default):
+
+```bash
+go run ./cmd/server
+```
+
+1. In another terminal, start desktop app:
+
+```bash
+cd apps/desktop
+wails dev
+```
+
+1. Frontend-only debug (optional):
+
+```bash
+cd apps/desktop/frontend
+npm install
+npm run dev
+```
+
+Useful env vars:
+
+- `DESKTOP_CHAT_BASE_URL` (default `http://localhost:8080`)
+- `DESKTOP_HISTORY_DB_PATH` (override local history SQLite path)
+
+### Build desktop
+
+```bash
+cd apps/desktop
+wails build
+```
+
 ## 🧪 Testing
 
 ```bash

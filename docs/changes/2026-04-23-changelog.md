@@ -57,3 +57,36 @@
 - `statusbar_darwin.go` 使用 Cocoa 桥接，需在 macOS 真机持续观察右键菜单与多屏定位行为。
 - 当前工作区同时包含 `docs/changes/2026-04-22-*` 历史文档草稿，本次未覆盖该文件内容。
 - `internal/agent/orchestrator.go` 有少量改动，已随本次提交一并纳入，请在评审时关注其影响范围。
+
+## Entry: desktop 启动器尺寸自适配上限调整与文档集成收口
+
+### Summary (sizing+docs)
+
+- `apps/desktop/app.go` 将 launcher 尺寸从固定感知改为按当前屏幕比例计算，并通过上下限裁剪：宽度上限提升到 `1160`，高度上限提升到 `860`。
+- `apps/desktop/app.go` 顶部偏移改为按屏幕高度比例计算并裁剪范围，减少不同分辨率下位置漂移。
+- `apps/desktop/frontend/src/App.css` 继续收敛视觉层级：输入框、历史面板、消息卡片的间距/边框/阴影做统一微调，贴近 Alfred 式低噪音风格。
+- `README.md`、`CONTRIBUTING.md` 补齐 desktop 开发/调试/构建指引；`.gitignore` 增加 Wails/Node 产物忽略规则。
+
+### Why (sizing+docs)
+
+- 大屏场景下固定尺寸会显得过小，影响可读性与沉浸感，需要按屏幕比例放大并保留边界。
+- 顶部定位若使用固定像素偏移，在多屏和不同缩放比下观感不一致，需要按屏幕高度自适配。
+- desktop 开发路径此前分散在对话上下文，仓库内文档需要一次性补齐，降低接手成本。
+
+### Changed Files (sizing+docs)
+
+- `.gitignore`
+- `CONTRIBUTING.md`
+- `README.md`
+- `apps/desktop/app.go`
+- `apps/desktop/frontend/src/App.css`
+
+### Validation (sizing+docs)
+
+- 代码层面完成静态检查式复核：窗口尺寸/位置计算链路可闭合，`clampInt` 与 `currentScreenSizeLocked` 调用关系一致。
+- 文档层面复核：`README.md` 与 `CONTRIBUTING.md` 的 desktop 步骤可直接执行，列表编号使用 `1.` 避免 MD029 告警。
+
+### Risk / Notes (sizing+docs)
+
+- 比例参数当前为经验值（`0.35/0.7`），在超宽屏与小尺寸外接屏仍可能需要后续微调。
+- 本次同时暂存了 `docs/changes/2026-04-22-*` 文档文件，commit 将按用户要求并入同一个提交。
